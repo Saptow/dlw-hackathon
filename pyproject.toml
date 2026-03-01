@@ -1,0 +1,19 @@
+[project]
+name = "dlw-hackathon"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "albumentations>=2.0.8",
+    "numpy>=2.4.2",
+    "opencv-python>=4.13.0.92",
+    "pillow>=12.1.1",
+    "scikit-image>=0.26.0",
+    "timm>=1.0.25",
+    "torch>=2.10.0",
+    "torchaudio>=2.10.0",
+    "torchvision>=0.25.0",
+    "transformers>=5.2.0",
+    "ultralytics>=8.4.19",
+]
