@@ -1,9 +1,11 @@
 import argparse
+import math
 import json
 import random
 import signal
 import sys
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -23,6 +25,27 @@ class DensityEstimate:
     available_area_sqm: float
     crowd_density_ppsqm: float
     risk_score: float
+
+
+@dataclass
+class MotionMetrics:
+    primary_flow_deg: float
+    counterflow_ratio: float
+    counterflow_flag: bool
+    shockwave_score: float
+    shockwave_flag: bool
+    acceleration_variance: float
+    lateral_displacement_spike_ratio: float
+    microsurge_score: float
+    turbulence_index: float
+
+
+@dataclass
+class TrackState:
+    centroid: tuple[float, float]
+    velocity: tuple[float, float]
+    previous_velocity: tuple[float, float]
+    last_seen_at: float
 
 
 class EdgeDeviceRunner:
@@ -48,6 +71,14 @@ class EdgeDeviceRunner:
         mock_max_box_width_px: float,
         mock_frame_width_px: int,
         mock_frame_height_px: int,
+        track_max_match_px: float,
+        track_ttl_s: float,
+        min_track_speed_px_s: float,
+        counterflow_ratio_threshold: float,
+        min_counterflow_tracks: int,
+        shockwave_velocity_drop_ratio: float,
+        shockwave_cluster_ratio: float,
+        lateral_spike_ratio_threshold: float,
     ) -> None:
         self.model = None if mock_mode else YOLO(model_path)
         self.source = source
@@ -69,6 +100,20 @@ class EdgeDeviceRunner:
         self.mock_max_box_width_px = mock_max_box_width_px
         self.mock_frame_width_px = mock_frame_width_px
         self.mock_frame_height_px = mock_frame_height_px
+        self.track_max_match_px = track_max_match_px
+        self.track_ttl_s = track_ttl_s
+        self.min_track_speed_px_s = min_track_speed_px_s
+        self.counterflow_ratio_threshold = counterflow_ratio_threshold
+        self.min_counterflow_tracks = min_counterflow_tracks
+        self.shockwave_velocity_drop_ratio = shockwave_velocity_drop_ratio
+        self.shockwave_cluster_ratio = shockwave_cluster_ratio
+        self.lateral_spike_ratio_threshold = lateral_spike_ratio_threshold
+
+        self._tracks: dict[int, TrackState] = {}
+        self._next_track_id = 1
+        self._previous_gray: np.ndarray | None = None
+        self._previous_velocity_mean: float | None = None
+        self._acceleration_var_history: deque[float] = deque(maxlen=30)
         self._running = True
 
     def run(self) -> None:
@@ -83,6 +128,9 @@ class EdgeDeviceRunner:
 
         capture = self._open_capture(self.source)
         next_post_at = time.time() + self._random_post_interval()
+        last_estimate = DensityEstimate(0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        last_motion_metrics = self._zero_motion_metrics()
+        last_enhanced_risk = 0.0
 
         while self._running:
             ok, frame = capture.read()
@@ -90,11 +138,27 @@ class EdgeDeviceRunner:
                 print("Video stream ended or frame read failed.")
                 break
 
-            face_widths = self._infer_face_widths(frame)
+            detections = self._infer_detections(frame)
+            face_widths = [max(0.0, float(x2 - x1)) for x1, _, x2, _ in detections]
             estimate = self._estimate_density(frame.shape, face_widths)
+            motion_metrics = self._compute_motion_metrics(frame, detections)
+            enhanced_risk = self._compute_enhanced_risk(
+                estimate.risk_score, motion_metrics
+            )
+            status = "active"
+            last_estimate = estimate
+            last_motion_metrics = motion_metrics
+            last_enhanced_risk = enhanced_risk
 
             if self.show_preview:
-                annotated = self._annotate_frame(frame.copy(), face_widths, estimate)
+                annotated = self._annotate_frame(
+                    frame.copy(),
+                    face_widths,
+                    estimate,
+                    motion_metrics,
+                    enhanced_risk,
+                    status,
+                )
                 cv2.imshow("edge-device", annotated)
                 key = cv2.waitKey(1)
                 if key in (27, ord("q")):
@@ -102,24 +166,45 @@ class EdgeDeviceRunner:
 
             now = time.time()
             if now >= next_post_at:
-                self._post_update(estimate)
+                self._post_update(estimate, enhanced_risk, status, motion_metrics)
                 next_post_at = now + self._random_post_interval()
 
         capture.release()
+        self._post_inactive_update(
+            last_estimate, last_enhanced_risk, last_motion_metrics
+        )
         if self.show_preview:
             cv2.destroyAllWindows()
 
     def _run_mock_loop(self) -> None:
         frame_shape = (self.mock_frame_height_px, self.mock_frame_width_px, 3)
         next_post_at = time.time() + self._random_post_interval()
+        last_estimate = DensityEstimate(0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        last_motion_metrics = self._zero_motion_metrics()
+        last_enhanced_risk = 0.0
 
         while self._running:
             face_widths = self._generate_mock_face_widths()
             estimate = self._estimate_density(frame_shape, face_widths)
+            motion_metrics = self._zero_motion_metrics()
+            enhanced_risk = self._compute_enhanced_risk(
+                estimate.risk_score, motion_metrics
+            )
+            status = "active"
+            last_estimate = estimate
+            last_motion_metrics = motion_metrics
+            last_enhanced_risk = enhanced_risk
 
             if self.show_preview:
                 frame = np.zeros(frame_shape, dtype=np.uint8)
-                annotated = self._annotate_frame(frame, face_widths, estimate)
+                annotated = self._annotate_frame(
+                    frame,
+                    face_widths,
+                    estimate,
+                    motion_metrics,
+                    enhanced_risk,
+                    status,
+                )
                 cv2.imshow("edge-device-mock", annotated)
                 key = cv2.waitKey(1)
                 if key in (27, ord("q")):
@@ -127,11 +212,14 @@ class EdgeDeviceRunner:
 
             now = time.time()
             if now >= next_post_at:
-                self._post_update(estimate)
+                self._post_update(estimate, enhanced_risk, status, motion_metrics)
                 next_post_at = now + self._random_post_interval()
 
             time.sleep(0.05)
 
+        self._post_inactive_update(
+            last_estimate, last_enhanced_risk, last_motion_metrics
+        )
         if self.show_preview:
             cv2.destroyAllWindows()
 
@@ -143,7 +231,9 @@ class EdgeDeviceRunner:
             for _ in range(face_count)
         ]
 
-    def _infer_face_widths(self, frame: np.ndarray) -> list[float]:
+    def _infer_detections(
+        self, frame: np.ndarray
+    ) -> list[tuple[float, float, float, float]]:
         if self.model is None:
             return []
 
@@ -167,8 +257,336 @@ class EdgeDeviceRunner:
             xyxy = np.asarray(tensor_like.numpy())
         else:
             xyxy = np.asarray(xyxy_raw)
-        widths = [max(0.0, float(x2 - x1)) for x1, _, x2, _ in xyxy if x2 > x1]
-        return widths
+        detections: list[tuple[float, float, float, float]] = []
+        for x1, y1, x2, y2 in xyxy:
+            if x2 <= x1 or y2 <= y1:
+                continue
+            detections.append((float(x1), float(y1), float(x2), float(y2)))
+        return detections
+
+    @staticmethod
+    def _centroid(box: tuple[float, float, float, float]) -> tuple[float, float]:
+        x1, y1, x2, y2 = box
+        return ((x1 + x2) * 0.5, (y1 + y2) * 0.5)
+
+    @staticmethod
+    def _angle_deg(vector_x: float, vector_y: float) -> float:
+        return float((math.degrees(math.atan2(vector_y, vector_x)) + 360.0) % 360.0)
+
+    @staticmethod
+    def _vector_speed(vector: tuple[float, float]) -> float:
+        return float(math.hypot(vector[0], vector[1]))
+
+    def _track_vectors(
+        self,
+        detections: list[tuple[float, float, float, float]],
+        now: float,
+    ) -> tuple[list[tuple[float, float]], list[float]]:
+        self._tracks = {
+            track_id: track
+            for track_id, track in self._tracks.items()
+            if (now - track.last_seen_at) <= self.track_ttl_s
+        }
+
+        centroids = [self._centroid(box) for box in detections]
+        unmatched_detection_ids = set(range(len(centroids)))
+        matched_track_ids: set[int] = set()
+        current_vectors: list[tuple[float, float]] = []
+        normalized_accelerations: list[float] = []
+
+        for track_id, track in list(self._tracks.items()):
+            nearest_detection_id = None
+            nearest_distance = float("inf")
+            for detection_id in unmatched_detection_ids:
+                centroid_x, centroid_y = centroids[detection_id]
+                delta_x = centroid_x - track.centroid[0]
+                delta_y = centroid_y - track.centroid[1]
+                distance = float(math.hypot(delta_x, delta_y))
+                if distance < nearest_distance:
+                    nearest_distance = distance
+                    nearest_detection_id = detection_id
+
+            if (
+                nearest_detection_id is None
+                or nearest_distance > self.track_max_match_px
+            ):
+                continue
+
+            matched_track_ids.add(track_id)
+            unmatched_detection_ids.discard(nearest_detection_id)
+
+            previous_centroid = track.centroid
+            centroid_x, centroid_y = centroids[nearest_detection_id]
+            time_delta = max(now - track.last_seen_at, 1e-3)
+            velocity = (
+                (centroid_x - previous_centroid[0]) / time_delta,
+                (centroid_y - previous_centroid[1]) / time_delta,
+            )
+            speed = self._vector_speed(velocity)
+
+            acceleration_x = (velocity[0] - track.velocity[0]) / time_delta
+            acceleration_y = (velocity[1] - track.velocity[1]) / time_delta
+            acceleration_norm = float(math.hypot(acceleration_x, acceleration_y)) / (
+                speed + 1e-6
+            )
+
+            track.previous_velocity = track.velocity
+            track.velocity = velocity
+            track.centroid = (centroid_x, centroid_y)
+            track.last_seen_at = now
+
+            if speed >= self.min_track_speed_px_s:
+                current_vectors.append(velocity)
+                normalized_accelerations.append(acceleration_norm)
+
+        for detection_id in unmatched_detection_ids:
+            centroid = centroids[detection_id]
+            self._tracks[self._next_track_id] = TrackState(
+                centroid=centroid,
+                velocity=(0.0, 0.0),
+                previous_velocity=(0.0, 0.0),
+                last_seen_at=now,
+            )
+            self._next_track_id += 1
+
+        if len(normalized_accelerations) >= 2:
+            acceleration_variance = float(np.var(np.array(normalized_accelerations)))
+        else:
+            acceleration_variance = 0.0
+
+        self._acceleration_var_history.append(acceleration_variance)
+        return current_vectors, list(normalized_accelerations)
+
+    def _compute_motion_metrics(
+        self,
+        frame: np.ndarray,
+        detections: list[tuple[float, float, float, float]],
+    ) -> MotionMetrics:
+        now = time.time()
+        track_vectors, _ = self._track_vectors(detections, now)
+
+        gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        if self._previous_gray is None:
+            self._previous_gray = gray_frame
+            return self._zero_motion_metrics()
+
+        initial_flow = np.zeros(
+            (gray_frame.shape[0], gray_frame.shape[1], 2), dtype=np.float32
+        )
+        flow = cv2.calcOpticalFlowFarneback(
+            self._previous_gray,
+            gray_frame,
+            initial_flow,
+            0.5,
+            3,
+            15,
+            3,
+            5,
+            1.2,
+            0,
+        )
+        self._previous_gray = gray_frame
+
+        flow_x = flow[..., 0]
+        flow_y = flow[..., 1]
+        magnitude = cv2.magnitude(flow_x, flow_y)
+
+        if track_vectors:
+            average_vector_x = float(np.mean([vec[0] for vec in track_vectors]))
+            average_vector_y = float(np.mean([vec[1] for vec in track_vectors]))
+            primary_flow_deg = self._angle_deg(average_vector_x, average_vector_y)
+            primary_unit = np.array(
+                [average_vector_x, average_vector_y], dtype=np.float32
+            )
+            primary_norm = float(np.linalg.norm(primary_unit))
+            if primary_norm > 1e-6:
+                primary_unit = primary_unit / primary_norm
+            else:
+                primary_unit = np.array([1.0, 0.0], dtype=np.float32)
+        else:
+            median_index = np.unravel_index(np.argmax(magnitude), magnitude.shape)
+            flow_vector = np.array(
+                [
+                    float(flow_x[median_index]),
+                    float(flow_y[median_index]),
+                ],
+                dtype=np.float32,
+            )
+            norm = float(np.linalg.norm(flow_vector))
+            if norm <= 1e-6:
+                primary_unit = np.array([1.0, 0.0], dtype=np.float32)
+                primary_flow_deg = 0.0
+            else:
+                primary_unit = flow_vector / norm
+                primary_flow_deg = self._angle_deg(
+                    float(primary_unit[0]), float(primary_unit[1])
+                )
+
+        opposing_count = 0
+        for vector_x, vector_y in track_vectors:
+            vector_norm = float(math.hypot(vector_x, vector_y))
+            if vector_norm <= self.min_track_speed_px_s:
+                continue
+            cosine_similarity = (
+                (vector_x * float(primary_unit[0]))
+                + (vector_y * float(primary_unit[1]))
+            ) / (vector_norm + 1e-6)
+            if cosine_similarity < -0.5:
+                opposing_count += 1
+
+        valid_track_count = len(track_vectors)
+        counterflow_ratio = (
+            float(opposing_count) / float(valid_track_count)
+            if valid_track_count > 0
+            else 0.0
+        )
+        counterflow_flag = (
+            opposing_count >= self.min_counterflow_tracks
+            and counterflow_ratio >= self.counterflow_ratio_threshold
+        )
+
+        if detections:
+            velocity_samples: list[float] = []
+            low_velocity_count = 0
+            total_sample_count = 0
+            for x1, y1, x2, y2 in detections:
+                left = max(int(x1), 0)
+                top = max(int(y1), 0)
+                right = min(int(x2), magnitude.shape[1] - 1)
+                bottom = min(int(y2), magnitude.shape[0] - 1)
+                if right <= left or bottom <= top:
+                    continue
+                region = magnitude[top:bottom, left:right]
+                if region.size == 0:
+                    continue
+                mean_region_velocity = float(np.mean(region))
+                velocity_samples.append(mean_region_velocity)
+                low_velocity_count += int(np.sum(region < mean_region_velocity * 0.5))
+                total_sample_count += int(region.size)
+            velocity_mean = (
+                float(np.mean(np.array(velocity_samples)))
+                if velocity_samples
+                else float(np.mean(magnitude))
+            )
+            low_velocity_ratio = (
+                float(low_velocity_count) / float(total_sample_count)
+                if total_sample_count > 0
+                else 0.0
+            )
+        else:
+            velocity_mean = float(np.mean(magnitude))
+            low_velocity_ratio = float(np.mean(magnitude < (velocity_mean * 0.5)))
+
+        if self._previous_velocity_mean is None:
+            drop_ratio = 0.0
+        else:
+            drop_ratio = max(
+                (self._previous_velocity_mean - velocity_mean)
+                / max(self._previous_velocity_mean, 1e-6),
+                0.0,
+            )
+
+        self._previous_velocity_mean = velocity_mean
+        shockwave_score = float(np.clip(drop_ratio, 0.0, 1.0))
+        shockwave_flag = (
+            drop_ratio >= self.shockwave_velocity_drop_ratio
+            and low_velocity_ratio >= self.shockwave_cluster_ratio
+        )
+
+        if valid_track_count >= 2:
+            speeds = np.array(
+                [self._vector_speed(vector) for vector in track_vectors],
+                dtype=np.float32,
+            )
+            speed_scale = float(np.mean(speeds)) + 1e-6
+            acceleration_variance = float(np.var(speeds / speed_scale))
+        else:
+            acceleration_variance = 0.0
+
+        lateral_unit = np.array([-primary_unit[1], primary_unit[0]], dtype=np.float32)
+        lateral_spikes = 0
+        for vector_x, vector_y in track_vectors:
+            speed = float(math.hypot(vector_x, vector_y))
+            if speed <= self.min_track_speed_px_s:
+                continue
+            lateral_component = abs(
+                vector_x * float(lateral_unit[0]) + vector_y * float(lateral_unit[1])
+            )
+            lateral_ratio = lateral_component / (speed + 1e-6)
+            if lateral_ratio >= self.lateral_spike_ratio_threshold:
+                lateral_spikes += 1
+
+        lateral_displacement_spike_ratio = (
+            float(lateral_spikes) / float(valid_track_count)
+            if valid_track_count > 0
+            else 0.0
+        )
+
+        magnitude_flat = magnitude.reshape(-1)
+        median_velocity = float(np.median(magnitude_flat))
+        high_quantile_velocity = float(np.percentile(magnitude_flat, 90))
+        microsurge_score = float(
+            np.clip(
+                (high_quantile_velocity - median_velocity)
+                / max(3.0 * median_velocity, 1e-6),
+                0.0,
+                1.0,
+            )
+        )
+
+        acceleration_norm = float(np.clip(acceleration_variance / 0.25, 0.0, 1.0))
+        turbulence_index = float(
+            np.clip(
+                0.35 * acceleration_norm
+                + 0.30 * lateral_displacement_spike_ratio
+                + 0.20 * microsurge_score
+                + 0.15 * shockwave_score,
+                0.0,
+                1.0,
+            )
+        )
+
+        return MotionMetrics(
+            primary_flow_deg=primary_flow_deg,
+            counterflow_ratio=counterflow_ratio,
+            counterflow_flag=counterflow_flag,
+            shockwave_score=shockwave_score,
+            shockwave_flag=shockwave_flag,
+            acceleration_variance=acceleration_variance,
+            lateral_displacement_spike_ratio=lateral_displacement_spike_ratio,
+            microsurge_score=microsurge_score,
+            turbulence_index=turbulence_index,
+        )
+
+    @staticmethod
+    def _zero_motion_metrics() -> MotionMetrics:
+        return MotionMetrics(
+            primary_flow_deg=0.0,
+            counterflow_ratio=0.0,
+            counterflow_flag=False,
+            shockwave_score=0.0,
+            shockwave_flag=False,
+            acceleration_variance=0.0,
+            lateral_displacement_spike_ratio=0.0,
+            microsurge_score=0.0,
+            turbulence_index=0.0,
+        )
+
+    @staticmethod
+    def _compute_enhanced_risk(
+        density_risk: float,
+        motion_metrics: MotionMetrics,
+    ) -> float:
+        flow_conflict = max(
+            motion_metrics.counterflow_ratio,
+            motion_metrics.shockwave_score,
+        )
+        enhanced_risk = (
+            0.60 * density_risk
+            + 0.20 * flow_conflict
+            + 0.20 * motion_metrics.turbulence_index
+        )
+        return float(np.clip(enhanced_risk, 0.0, 1.0))
 
     def _estimate_density(
         self, frame_shape: tuple[int, ...], face_widths_px: Iterable[float]
@@ -230,9 +648,13 @@ class EdgeDeviceRunner:
         risk = 0.75 * density_component + 0.25 * crowding_component
         return float(np.clip(risk, 0.0, 1.0))
 
-    def _post_update(self, estimate: DensityEstimate) -> None:
-        status = "active"
-
+    def _post_update(
+        self,
+        estimate: DensityEstimate,
+        enhanced_risk: float,
+        status: str,
+        motion_metrics: MotionMetrics,
+    ) -> None:
         payload = {
             "device_id": self.device_id,
             "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
@@ -240,7 +662,7 @@ class EdgeDeviceRunner:
             "metrics": {
                 "people_count": estimate.people_count,
                 "crowd_density": round(estimate.crowd_density_ppsqm, 6),
-                "threshold": round(estimate.risk_score, 6),
+                "threshold": round(enhanced_risk, 6),
             },
         }
 
@@ -252,11 +674,27 @@ class EdgeDeviceRunner:
                 {
                     "people_count": estimate.people_count,
                     "crowd_density_ppsqm": round(estimate.crowd_density_ppsqm, 3),
-                    "risk": round(estimate.risk_score, 3),
+                    "risk": round(enhanced_risk, 3),
                     "available_area_sqm": round(estimate.available_area_sqm, 2),
+                    "status": status,
+                    "primary_flow_deg": round(motion_metrics.primary_flow_deg, 1),
+                    "counterflow_ratio": round(motion_metrics.counterflow_ratio, 3),
+                    "shockwave_score": round(motion_metrics.shockwave_score, 3),
+                    "turbulence_index": round(motion_metrics.turbulence_index, 3),
                 }
             ),
         )
+
+    def _post_inactive_update(
+        self,
+        estimate: DensityEstimate,
+        enhanced_risk: float,
+        motion_metrics: MotionMetrics,
+    ) -> None:
+        try:
+            self._post_update(estimate, enhanced_risk, "inactive", motion_metrics)
+        except Exception as exc:
+            print(f"Failed to post inactive update: {exc}")
 
     def _register_device_location(self) -> None:
         payload = {
@@ -309,13 +747,23 @@ class EdgeDeviceRunner:
 
     @staticmethod
     def _annotate_frame(
-        frame: np.ndarray, widths_px: list[float], estimate: DensityEstimate
+        frame: np.ndarray,
+        widths_px: list[float],
+        estimate: DensityEstimate,
+        motion_metrics: MotionMetrics,
+        enhanced_risk: float,
+        status: str,
     ) -> np.ndarray:
         overlay = [
             f"Faces: {estimate.people_count}",
             f"Density: {estimate.crowd_density_ppsqm:.2f} ppl/sqm",
-            f"Risk: {estimate.risk_score:.2f}",
+            f"Risk: {enhanced_risk:.2f}",
+            f"Camera: {status}",
             f"Avail area: {estimate.available_area_sqm:.2f} sqm",
+            f"Primary flow: {motion_metrics.primary_flow_deg:.1f} deg",
+            f"Counterflow: {motion_metrics.counterflow_ratio:.2f}",
+            f"Shockwave: {motion_metrics.shockwave_score:.2f}",
+            f"Turbulence idx: {motion_metrics.turbulence_index:.2f}",
         ]
 
         y = 30
@@ -438,6 +886,54 @@ def parse_args() -> argparse.Namespace:
         default=720,
         help="Mock frame height for density estimation",
     )
+    parser.add_argument(
+        "--track-max-match-px",
+        type=float,
+        default=120.0,
+        help="Maximum centroid distance for matching detections across frames",
+    )
+    parser.add_argument(
+        "--track-ttl-s",
+        type=float,
+        default=1.0,
+        help="Track time-to-live in seconds without new detections",
+    )
+    parser.add_argument(
+        "--min-track-speed-px-s",
+        type=float,
+        default=8.0,
+        help="Minimum track speed to count as directional movement",
+    )
+    parser.add_argument(
+        "--counterflow-ratio-threshold",
+        type=float,
+        default=0.25,
+        help="Ratio threshold to flag dangerous opposing flow",
+    )
+    parser.add_argument(
+        "--min-counterflow-tracks",
+        type=int,
+        default=4,
+        help="Minimum number of opposing tracks before counterflow alert",
+    )
+    parser.add_argument(
+        "--shockwave-velocity-drop-ratio",
+        type=float,
+        default=0.35,
+        help="Relative velocity drop threshold for stop-start shockwave detection",
+    )
+    parser.add_argument(
+        "--shockwave-cluster-ratio",
+        type=float,
+        default=0.40,
+        help="Fraction of low-velocity pixels needed to confirm shockwave",
+    )
+    parser.add_argument(
+        "--lateral-spike-ratio-threshold",
+        type=float,
+        default=0.60,
+        help="Lateral-to-total motion ratio above which motion is a displacement spike",
+    )
     return parser.parse_args()
 
 
@@ -465,6 +961,22 @@ def main() -> None:
         raise ValueError("Invalid mock box width bounds")
     if args.mock_frame_width_px <= 0 or args.mock_frame_height_px <= 0:
         raise ValueError("Invalid mock frame size")
+    if args.track_max_match_px <= 0:
+        raise ValueError("--track-max-match-px must be > 0")
+    if args.track_ttl_s <= 0:
+        raise ValueError("--track-ttl-s must be > 0")
+    if args.min_track_speed_px_s < 0:
+        raise ValueError("--min-track-speed-px-s must be >= 0")
+    if not (0.0 <= args.counterflow_ratio_threshold <= 1.0):
+        raise ValueError("--counterflow-ratio-threshold must be within [0, 1]")
+    if args.min_counterflow_tracks < 1:
+        raise ValueError("--min-counterflow-tracks must be >= 1")
+    if not (0.0 <= args.shockwave_velocity_drop_ratio <= 1.0):
+        raise ValueError("--shockwave-velocity-drop-ratio must be within [0, 1]")
+    if not (0.0 <= args.shockwave_cluster_ratio <= 1.0):
+        raise ValueError("--shockwave-cluster-ratio must be within [0, 1]")
+    if not (0.0 <= args.lateral_spike_ratio_threshold <= 1.0):
+        raise ValueError("--lateral-spike-ratio-threshold must be within [0, 1]")
 
     runner = EdgeDeviceRunner(
         model_path=args.model,
@@ -487,6 +999,14 @@ def main() -> None:
         mock_max_box_width_px=args.mock_max_box_width_px,
         mock_frame_width_px=args.mock_frame_width_px,
         mock_frame_height_px=args.mock_frame_height_px,
+        track_max_match_px=args.track_max_match_px,
+        track_ttl_s=args.track_ttl_s,
+        min_track_speed_px_s=args.min_track_speed_px_s,
+        counterflow_ratio_threshold=args.counterflow_ratio_threshold,
+        min_counterflow_tracks=args.min_counterflow_tracks,
+        shockwave_velocity_drop_ratio=args.shockwave_velocity_drop_ratio,
+        shockwave_cluster_ratio=args.shockwave_cluster_ratio,
+        lateral_spike_ratio_threshold=args.lateral_spike_ratio_threshold,
     )
     runner.run()
 

@@ -9,6 +9,10 @@ This script:
 - estimates scene scale from median face bounding-box width
 - estimates crowd density in people/square-meter
 - computes a crowd-crush risk score on `[0, 1]`
+- assigns lightweight tracking IDs to detections across frames
+- computes bidirectional flow conflict and opposing-stream ratio
+- detects stop-start shockwave propagation from optical-flow velocity drops
+- computes a crowd turbulence index from acceleration/lateral/microsurge signals
 - posts updates to backend every random `10-15s` by default
 
 ````
@@ -112,8 +116,16 @@ uv run edge_device/run_edge_inference.py \
 - Every `10-15s` (configurable), script calls `POST /db/push` with:
     - `device_id`
     - current UTC `timestamp`
-    - status (`active`, `warning`, `critical`)
-    - metrics: `people_count`, `crowd_density` (people/sqm), `threshold` (risk score)
+    - status (`active` or `inactive` camera state only)
+    - metrics: `people_count`, `crowd_density` (people/sqm), `threshold` (enhanced risk score)
+
+The enhanced risk score combines:
+
+- density risk (existing)
+- flow conflict score (counterflow + stop-start shockwave)
+- turbulence index (acceleration variance + lateral displacement spikes + micro-surges)
+
+Detailed motion values are printed in edge logs and shown in preview mode overlay.
 
 ## Tunable parameters
 
@@ -124,6 +136,17 @@ uv run edge_device/run_edge_inference.py \
 - `--min-person-space-sqm`: minimum occupied area per person (default `0.35`)
 - `--post-min-s` and `--post-max-s`: posting interval range (default `10` to `15`)
 - `--mock-mode`: bypass model + video and generate randomized detections for testing
+
+Flow conflict / turbulence tuning:
+
+- `--track-max-match-px`: max centroid match distance between frames
+- `--track-ttl-s`: how long unmatched tracks are kept
+- `--min-track-speed-px-s`: ignore very slow movement for direction analysis
+- `--counterflow-ratio-threshold`: opposing-track ratio that triggers counterflow alert
+- `--min-counterflow-tracks`: minimum opposing tracks to avoid noisy alerts
+- `--shockwave-velocity-drop-ratio`: relative velocity drop needed to flag shockwave
+- `--shockwave-cluster-ratio`: low-velocity pixel fraction needed for shockwave confirmation
+- `--lateral-spike-ratio-threshold`: ratio defining strong sideways displacement
 
 ## Notes
 
