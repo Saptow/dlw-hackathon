@@ -26,10 +26,10 @@ export function LiveActivityLog({ logs }: LiveActivityLogProps) {
                     <Terminal size={14} className="mr-2 text-indigo-400" />
                     Raw Packet Feed
                 </h3>
-                <div className="flex items-center text-[10px] text-emerald-400 font-mono animate-pulse">
+                {/* <div className="flex items-center text-[10px] text-emerald-400 font-mono">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 mr-2 shadow-[0_0_5px_rgba(16,185,129,0.8)]" />
                     RECEIVING
-                </div>
+                </div> */}
             </div>
 
             <div
