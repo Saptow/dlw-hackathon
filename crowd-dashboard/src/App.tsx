@@ -26,7 +26,6 @@ function App() {
             </div>
           </header>
 
-          <GlobalRiskGauge devices={devices} />
 
           {/* Bento Grid layout */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 auto-rows-[300px]">
