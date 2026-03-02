@@ -21,7 +21,7 @@ function App() {
                 Operations Command Center
               </h1>
               <p className="text-slate-400 font-mono text-xs md:text-sm uppercase tracking-widest">
-                Live Telemetry Feed & Crowd Control Density Grid
+                Live Feed & Crowd Control Grid
               </p>
             </div>
           </header>

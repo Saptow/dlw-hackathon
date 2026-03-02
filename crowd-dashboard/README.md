@@ -1,73 +1,71 @@
-# React + TypeScript + Vite
+# Crowd Control Operations Dashboard
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+## 🚀 Getting Started
 
-Currently, two official plugins are available:
+1. **Install Dependencies:**
+   ```bash
+   npm install
+   ```
+2. **Run the Development Server:**
+   ```bash
+   npm run dev
+   ```
+3. Open `http://localhost:5173` in your browser.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+*Note: By default, the dashboard runs in Simulator Mode, generating fake telemetry data for demonstration.*
 
-## React Compiler
+---
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## 🔌 Backend Developer Integration Guide
 
-## Expanding the ESLint configuration
+To connect the real Edge AI data to this dashboard, your backend must expose a **WebSocket Endpoint** (e.g., `ws://localhost:8080/stream`) that pushes JSON telemetry packets.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+### Step 1: Format the JSON Payload (The Data Contract)
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+Your WebSocket server needs to push data precisely in the following JSON structure. You can push a single object update or an array of objects.
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
+```json
+{
+  "device_id": "DEV-001",
+  "timestamp": "2023-10-27T10:00:00Z",
+  "status": "active", 
+  "metrics": {
+    "people_count": 142,
+    "crowd_density": 0.45,
+    "threshold": 0.75
   },
-])
+  "location_label": "North Gate Area"
+}
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+**Important Field Constraints:**
+* `status` (string): MUST be exactly one of: `"active"`, `"obscured"`, `"offline"`, or `"uncertain"`.
+* `crowd_density` (float): Measured as people per square meter.
+* `threshold` (float): Range `0.0` to `1.0`. Represents the Risk of Crush index (Critical State is `>= 0.8`).
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+### Step 2: Connect the Frontend
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+Once the WebSocket endpoint is running locally or on a server, follow these steps to hook it up:
+
+1. Open `src/App.tsx`.
+2. Swap the simulator hook for the production stream hook.
+
+**Change from:**
+```tsx
+import { useTelemetrySimulator } from './hooks/useTelemetrySimulator';
+// import { useTelemetryStream } from './hooks/useTelemetryStream';
+
+function App() {
+  const { devices, logs, packets } = useTelemetrySimulator();
 ```
+
+**Change to:**
+```tsx
+// import { useTelemetrySimulator } from './hooks/useTelemetrySimulator';
+import { useTelemetryStream } from './hooks/useTelemetryStream';
+
+function App() {
+  // Replace this URL with the actual backend WebSocket URL
+  const { devices, logs, packets } = useTelemetryStream('ws://localhost:8080/stream');
+```
+
