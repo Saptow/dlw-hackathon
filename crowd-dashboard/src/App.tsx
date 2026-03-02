@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useTelemetrySimulator } from './hooks/useTelemetrySimulator';
 import { ZoneCard } from './components/ZoneCard';
 import { LiveActivityLog } from './components/LiveActivityLog';
@@ -5,7 +6,8 @@ import { RawPacketStream } from './components/RawPacketStream';
 import { StationModel } from './components/StationModel';
 
 function App() {
-  const { devices, logs, packets } = useTelemetrySimulator();
+  const [globalThreshold, setGlobalThreshold] = useState(0.8);
+  const { devices, logs, packets } = useTelemetrySimulator(globalThreshold);
 
   return (
     <div className="h-screen w-full bg-brand-bg flex font-sans text-slate-200 overflow-hidden">
@@ -16,7 +18,7 @@ function App() {
         <div className="fixed inset-0 pointer-events-none opacity-20" style={{ backgroundImage: 'radial-gradient(var(--color-slate-800) 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
 
         <div className="relative z-10 max-w-7xl mx-auto flex flex-col h-full">
-          <header className="mb-8 flex justify-between items-end">
+          <header className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
             <div>
               {/* <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-white mb-2 flex items-center shadow-black drop-shadow-lg">
                 Operations Command Center
@@ -25,6 +27,22 @@ function App() {
                 Live Feed & Crowd Control Grid
               </p>
             </div>
+
+            {/* Global Threshold Control */}
+            <div className="flex flex-col sm:flex-row items-center gap-3 bg-slate-900/50 px-4 py-2.5 rounded-xl border border-white/5 shadow-inner">
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-400 whitespace-nowrap">
+                Risk Limit: <span className="text-white ml-1">{Math.round(globalThreshold * 100)}%</span>
+              </label>
+              <input
+                type="range"
+                min="0.1"
+                max="1"
+                step="0.05"
+                value={globalThreshold}
+                onChange={(e) => setGlobalThreshold(parseFloat(e.target.value))}
+                className="w-32 md:w-48 accent-red-500 hover:accent-red-400 cursor-pointer"
+              />
+            </div>
           </header>
 
 
@@ -32,12 +50,12 @@ function App() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 auto-rows-[300px]">
             {/* 3D Station Digital Twin (Featured Span) */}
             <div className="md:col-span-2 lg:col-span-2 xl:col-span-2 row-span-1 md:row-span-2 rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-xl bg-slate-900/50">
-              <StationModel devices={devices} />
+              <StationModel devices={devices} globalThreshold={globalThreshold} />
             </div>
 
             {/* Zone Cards */}
             {devices.map((device) => (
-              <ZoneCard key={device.device_id} data={device} />
+              <ZoneCard key={device.device_id} data={device} globalThreshold={globalThreshold} />
             ))}
           </div>
 

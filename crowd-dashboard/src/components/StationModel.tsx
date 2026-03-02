@@ -6,6 +6,7 @@ import type { TelemetryData } from '../types';
 
 interface StationModelProps {
     devices: TelemetryData[];
+    globalThreshold: number;
 }
 
 // Map logical locations to 3D spatial coordinates [x, y, z]
@@ -16,12 +17,12 @@ const LOCATION_COORDINATES: Record<string, [number, number, number]> = {
     "Turnstiles": [0, 0.01, 2]
 };
 
-function HeatCircle({ device }: { device: TelemetryData }) {
+function HeatCircle({ device, globalThreshold }: { device: TelemetryData, globalThreshold: number }) {
     const meshRef = useRef<THREE.Mesh>(null);
     const { metrics, status, location_label } = device;
 
     const position = LOCATION_COORDINATES[location_label] || [0, 0.01, 0];
-    const isCritical = metrics.threshold >= 0.8;
+    const isCritical = metrics.threshold >= globalThreshold;
 
     // Determine color
     let color = "#10b981"; // emerald-500 (safe)
@@ -162,7 +163,7 @@ function StationEnvironment() {
     );
 }
 
-export function StationModel({ devices }: StationModelProps) {
+export function StationModel({ devices, globalThreshold }: StationModelProps) {
     return (
         <div className="glass-panel overflow-hidden relative border-white/10 w-full h-[400px] md:h-full min-h-[400px]">
             <div className="absolute top-4 left-4 z-10 pointer-events-none">
@@ -176,7 +177,7 @@ export function StationModel({ devices }: StationModelProps) {
                 <StationEnvironment />
 
                 {devices.map(device => (
-                    <HeatCircle key={device.device_id} device={device} />
+                    <HeatCircle key={device.device_id} device={device} globalThreshold={globalThreshold} />
                 ))}
 
                 <OrbitControls

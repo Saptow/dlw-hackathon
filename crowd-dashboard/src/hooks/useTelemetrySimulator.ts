@@ -24,7 +24,7 @@ const INITIAL_DEVICES: TelemetryData[] = LOCATIONS.map((loc, i) => {
     };
 });
 
-export function useTelemetrySimulator() {
+export function useTelemetrySimulator(globalThreshold: number = 0.8) {
     const [state, setState] = useState<{
         data: Record<string, TelemetryData>;
         logs: LogEntry[];
@@ -51,10 +51,15 @@ export function useTelemetrySimulator() {
     // Keep state in a ref for the interval to avoid stale closures,
     // which also avoids React strict mode double-invocation impurity issues
     const stateRef = useRef(state);
+    const thresholdRef = useRef(globalThreshold);
 
     useEffect(() => {
         stateRef.current = state;
     }, [state]);
+
+    useEffect(() => {
+        thresholdRef.current = globalThreshold;
+    }, [globalThreshold]);
 
     useEffect(() => {
         const interval = setInterval(() => {
@@ -103,7 +108,7 @@ export function useTelemetrySimulator() {
                     threshold = Math.min(1.0, Math.max(0, baseRisk + volatility));
                 }
 
-                if (newStatus === "active" && threshold > 0.8) {
+                if (newStatus === "active" && threshold > thresholdRef.current) {
                     logType = 'CRITICAL_ALERT';
                     message = `Crush risk critical (${(threshold * 100).toFixed(1)}%) at ${crowd_density.toFixed(2)} ppl/m²`;
                 }

@@ -7,9 +7,10 @@ import { cn } from '../lib/utils';
 
 interface ZoneCardProps {
     data: TelemetryData;
+    globalThreshold: number;
 }
 
-export function ZoneCard({ data }: ZoneCardProps) {
+export function ZoneCard({ data, globalThreshold }: ZoneCardProps) {
     const [dataAge, setDataAge] = useState<string>('just now');
 
     useEffect(() => {
@@ -21,25 +22,23 @@ export function ZoneCard({ data }: ZoneCardProps) {
 
     const { metrics, status, location_label, device_id } = data;
     // Threshold now acts as the dynamic "Risk of Crush" index (0 to 1)
-    const isCritical = metrics.threshold >= 0.8;
+    const isCritical = metrics.threshold >= globalThreshold;
     const isReliable = status === 'active';
 
     const liquidHeight = `${Math.min(100, Math.max(0, metrics.threshold * 100))}%`;
-    const riskLimitPosition = `80%`; // Constant critical limit marker for the UI
+    const riskLimitPosition = `${globalThreshold * 100}%`;
 
     return (
         <div
             className={cn(
                 "glass-panel relative overflow-hidden transition-all duration-500 shadow-md",
-                isCritical && isReliable ? "ring-2 ring-red-500/80 shadow-[0_0_15px_rgba(239,68,68,0.5)]" : "border-white/10"
+                isCritical && isReliable ? "ring-2 ring-red-500/80 " : "border-white/10"
             )}
         >
             {/* Background Pulse for Critical State */}
             {isCritical && isReliable && (
-                <motion.div
+                <div
                     className="absolute inset-0 bg-red-500/10 pointer-events-none"
-                    animate={{ opacity: [0.1, 0.4, 0.1] }}
-                    transition={{ duration: 1.5, repeat: Infinity }}
                 />
             )}
 
@@ -53,9 +52,9 @@ export function ZoneCard({ data }: ZoneCardProps) {
                         </h3>
                         <p className="text-xs text-slate-400 font-mono mt-0.5">{device_id}</p>
                     </div>
-                    
+
                     {/* Wrap the badge area in a container that reserves space */}
-                    <div className="flex items-center justify-end h-8 min-w-[80px]"> 
+                    <div className="flex items-center justify-end h-8 min-w-[80px]">
                         {!isReliable ? (
                             <span className="flex items-center text-xs text-amber-400 bg-amber-400/10 px-2 py-1 rounded-full border border-amber-400/20">
                                 {status === 'offline' && <WifiOff size={12} className="mr-1" />}
@@ -73,7 +72,7 @@ export function ZoneCard({ data }: ZoneCardProps) {
                             </motion.div>
                         ) : (
                             // This invisible div keeps the space occupied when everything is "Normal"
-                            <div className="w-5 h-5" /> 
+                            <div className="w-5 h-5" />
                         )}
                     </div>
                 </div>
@@ -104,12 +103,25 @@ export function ZoneCard({ data }: ZoneCardProps) {
                     {/* Liquid Progress Bar */}
                     <div className="relative h-20 w-full bg-slate-900/50 rounded-lg overflow-hidden mt-auto border border-white/5">
                         {/* Critical Risk Limit Marker */}
-                        <div
-                            className="absolute left-0 right-0 border-b border-dashed border-red-500/60 z-20"
+                        {/* <div
+                            className="absolute left-0 right-0 border-b border-dashed border-red-500/60 z-20 transition-all duration-300"
                             style={{ bottom: riskLimitPosition }}
                         >
                             <span className="absolute right-1 -top-4 text-[10px] text-red-400 font-mono bg-slate-950/80 px-1 rounded">
-                                LIMIT 80%
+                                LIMIT {Math.round(globalThreshold * 100)}%
+                            </span>
+                        </div> */}
+
+                        <div
+                            className="absolute left-0 right-0 border-b border-dashed border-red-500/60 z-20 transition-all duration-300"
+                            style={{ bottom: riskLimitPosition }}
+                        >
+                            <span className={cn(
+                                "absolute right-1 text-[10px] text-red-400 font-mono bg-slate-950/80 px-1 rounded transition-all duration-300",
+                                // If threshold is high, move label below the line to prevent cutoff
+                                globalThreshold > 0.8 ? "top-1" : "-top-4"
+                            )}>
+                                LIMIT {Math.round(globalThreshold * 100)}%
                             </span>
                         </div>
 
@@ -124,7 +136,7 @@ export function ZoneCard({ data }: ZoneCardProps) {
                             transition={{ type: "spring", stiffness: 50, damping: 15 }}
                         >
                             {/* Fake ripples effect via pseudo elements or additional divs */}
-                            <div className="absolute top-0 left-0 right-0 h-1 bg-white/20 blur-[1px]" />
+                            <div className="absolute top-0 left-0 right-0 h-1  blur-[1px]" />
                         </motion.div>
                     </div>
                 </div>
