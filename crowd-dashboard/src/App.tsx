@@ -2,6 +2,7 @@ import { useTelemetrySimulator } from './hooks/useTelemetrySimulator';
 import { ZoneCard } from './components/ZoneCard';
 import { LiveActivityLog } from './components/LiveActivityLog';
 import { RawPacketStream } from './components/RawPacketStream';
+import { StationModel } from './components/StationModel';
 
 function App() {
   const { devices, logs, packets } = useTelemetrySimulator();
@@ -27,8 +28,14 @@ function App() {
           </header>
 
 
-          {/* Bento Grid layout */}
+          {/* Dashboard Layout */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 auto-rows-[300px]">
+            {/* 3D Station Digital Twin (Featured Span) */}
+            <div className="md:col-span-2 lg:col-span-2 xl:col-span-2 row-span-1 md:row-span-2 rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-xl bg-slate-900/50">
+              <StationModel devices={devices} />
+            </div>
+
+            {/* Zone Cards */}
             {devices.map((device) => (
               <ZoneCard key={device.device_id} data={device} />
             ))}
