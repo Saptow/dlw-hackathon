@@ -112,3 +112,23 @@ Controls:
       --location-label "North Gate Area" \
       --preview
     ```
+
+# ML inference setup
+## 🚀 Getting Started
+1. **Change directory:**
+    ```bash
+    cd testbench
+    ```
+
+2. **Install Dependencies:**
+    Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and run:
+    ```bash
+    uv sync
+    ```
+
+3. **Run the script:**
+    ```bash
+    uv run test_video_metrics.py
+    ```
+
+4. The script will process the video and print out the metrics in the terminal and save the file accordingly. The video path is hard-coded, so you may need to modify the script to point to your video file.
