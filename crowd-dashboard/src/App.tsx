@@ -1,5 +1,4 @@
 import { useTelemetrySimulator } from './hooks/useTelemetrySimulator';
-import { SystemHealthSidebar } from './components/SystemHealthSidebar';
 import { GlobalRiskGauge } from './components/GlobalRiskGauge';
 import { ZoneCard } from './components/ZoneCard';
 import { LiveActivityLog } from './components/LiveActivityLog';
@@ -10,8 +9,6 @@ function App() {
 
   return (
     <div className="h-screen w-full bg-brand-bg flex font-sans text-slate-200 overflow-hidden">
-      {/* Sidebar fixed to the right or left */}
-      <SystemHealthSidebar devices={devices} />
 
       {/* Main Dashboard Content */}
       <main className="flex-1 p-6 md:p-8 overflow-y-auto custom-scrollbar relative h-full">
@@ -22,17 +19,11 @@ function App() {
           <header className="mb-8 flex justify-between items-end">
             <div>
               <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-white mb-2 flex items-center shadow-black drop-shadow-lg">
-                <span className="bg-red-500 w-3 h-3 rounded-full mr-3 animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.8)]" />
                 Operations Command Center
               </h1>
-              <p className="text-slate-400 font-mono text-xs md:text-sm uppercase tracking-widest pl-6">
+              <p className="text-slate-400 font-mono text-xs md:text-sm uppercase tracking-widest">
                 Live Telemetry Feed & Crowd Control Density Grid
               </p>
-            </div>
-            {/* Optional Header Actions */}
-            <div className="hidden md:flex text-slate-500 font-mono text-[10px] space-x-4">
-              <span>SYSTEM: ONLINE</span>
-              <span>UPLINK: SECURE</span>
             </div>
           </header>
 
