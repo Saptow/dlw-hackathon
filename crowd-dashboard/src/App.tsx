@@ -1,5 +1,4 @@
 import { useTelemetrySimulator } from './hooks/useTelemetrySimulator';
-import { GlobalRiskGauge } from './components/GlobalRiskGauge';
 import { ZoneCard } from './components/ZoneCard';
 import { LiveActivityLog } from './components/LiveActivityLog';
 import { RawPacketStream } from './components/RawPacketStream';
