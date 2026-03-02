@@ -98,35 +98,30 @@ Controls:
     ```bash
     uv sync
     ```
-3. **Run Edge Inference in Mock Mode:**
+3. **Run Edge Inference in Mock Mode with 1 Live Camera:**
     ```bash
     ./run_parallel_cameras.sh
     ```
-4. To run a single camera in live mode:
-    ```bash
-    uv run run_edge_inference.py \
-      --model path/to/your_face_model.pt \
-      --source 0 \
-      --device-id DEV-001 \
-      --server-url http://localhost:8080 \
-      --location-label "North Gate Area" \
-      --preview
-    ```
 
 # ML inference setup
+
 ## 🚀 Getting Started
+
 1. **Change directory:**
+
     ```bash
     cd testbench
     ```
 
 2. **Install Dependencies:**
-    Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and run:
+   Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and run:
+
     ```bash
     uv sync
     ```
 
 3. **Run the script:**
+
     ```bash
     uv run test_video_metrics.py
     ```
