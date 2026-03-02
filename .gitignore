@@ -209,3 +209,5 @@ __marimo__/
 .DS_Store
 raw_data/
 combined_dataset/
+YOLO-CROWD
+data/
