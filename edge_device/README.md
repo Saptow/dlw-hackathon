@@ -29,9 +29,32 @@ uv run edge_device/run_edge_inference.py \
 
 Optional tuning for mock behavior:
 
-- `--mock-min-faces` / `--mock-max-faces`
+- `--mock-face-mean` / `--mock-face-sd`
 - `--mock-min-box-width-px` / `--mock-max-box-width-px`
 - `--mock-frame-width-px` / `--mock-frame-height-px`
+
+Defaults use Gaussian face counts with mean `35` and standard deviation `10`.
+
+## Calibration graph helper
+
+Generate a graph to pick realistic mock widths and understand width → distance → density:
+
+```bash
+uv run edge_device/plot_mock_calibration.py \
+  --mock-face-mean 35 \
+  --mock-face-sd 10 \
+  --width-min-px 16 \
+  --width-max-px 200 \
+  --out edge_device/mock_calibration.png
+```
+
+This plots:
+
+- median box width vs estimated distance (using pinhole approximation)
+- median box width vs density for `mean-sd`, `mean`, and `mean+sd` face counts
+
+Tune with `--focal-length-px`, `--frame-width-px`, `--frame-height-px`, and
+`--face-width-m` to match your camera.
 
 ## Run 4 cameras in parallel (3 mock + 1 switchable)
 
@@ -97,6 +120,7 @@ uv run edge_device/run_edge_inference.py \
 - `--conf`: detection confidence threshold (default `0.35`)
 - `--class-id`: class index considered as face class (default `0`)
 - `--assumed-face-width-m`: average face width for scale estimation (default `0.16`)
+- `--focal-length-px`: focal length in pixels for distance/FOV area estimation (default `900`)
 - `--min-person-space-sqm`: minimum occupied area per person (default `0.35`)
 - `--post-min-s` and `--post-max-s`: posting interval range (default `10` to `15`)
 - `--mock-mode`: bypass model + video and generate randomized detections for testing
