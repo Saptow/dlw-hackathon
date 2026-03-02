@@ -51,3 +51,20 @@ Controls:
 - `n` or right arrow: next image
 - `p` or left arrow: previous image
 - `q` or `Esc`: quit
+
+
+# Frontend setup
+## 🚀 Getting Started
+1. **Change directory:**
+   ```bash
+   cd crowd-dashboard
+   ```
+2. **Install Dependencies:**
+   ```bash
+   npm install
+   ```
+3. **Run the Development Server:**
+   ```bash
+   npm run dev
+   ```
+4. Open `http://localhost:5173` in your browser.
