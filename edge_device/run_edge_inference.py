@@ -36,13 +36,14 @@ class EdgeDeviceRunner:
         confidence: float,
         class_id: int,
         assumed_face_width_m: float,
+        focal_length_px: float,
         min_person_space_sqm: float,
         post_min_interval_s: float,
         post_max_interval_s: float,
         show_preview: bool,
         mock_mode: bool,
-        mock_min_faces: int,
-        mock_max_faces: int,
+        mock_face_mean: float,
+        mock_face_sd: float,
         mock_min_box_width_px: float,
         mock_max_box_width_px: float,
         mock_frame_width_px: int,
@@ -56,13 +57,14 @@ class EdgeDeviceRunner:
         self.confidence = confidence
         self.class_id = class_id
         self.assumed_face_width_m = assumed_face_width_m
+        self.focal_length_px = focal_length_px
         self.min_person_space_sqm = min_person_space_sqm
         self.post_min_interval_s = post_min_interval_s
         self.post_max_interval_s = post_max_interval_s
         self.show_preview = show_preview
         self.mock_mode = mock_mode
-        self.mock_min_faces = mock_min_faces
-        self.mock_max_faces = mock_max_faces
+        self.mock_face_mean = mock_face_mean
+        self.mock_face_sd = mock_face_sd
         self.mock_min_box_width_px = mock_min_box_width_px
         self.mock_max_box_width_px = mock_max_box_width_px
         self.mock_frame_width_px = mock_frame_width_px
@@ -134,7 +136,8 @@ class EdgeDeviceRunner:
             cv2.destroyAllWindows()
 
     def _generate_mock_face_widths(self) -> list[float]:
-        face_count = random.randint(self.mock_min_faces, self.mock_max_faces)
+        sampled_faces = random.gauss(self.mock_face_mean, self.mock_face_sd)
+        face_count = max(0, int(round(sampled_faces)))
         return [
             random.uniform(self.mock_min_box_width_px, self.mock_max_box_width_px)
             for _ in range(face_count)
@@ -185,11 +188,12 @@ class EdgeDeviceRunner:
             )
 
         median_face_width_px = float(np.median(np.array(widths, dtype=np.float32)))
-        meters_per_pixel = self.assumed_face_width_m / max(median_face_width_px, 1.0)
-
-        scene_area_sqm = max(
-            (width_px * meters_per_pixel) * (height_px * meters_per_pixel), 1e-6
+        distance_m = (self.focal_length_px * self.assumed_face_width_m) / max(
+            median_face_width_px, 1.0
         )
+        scene_width_m = (distance_m * width_px) / max(self.focal_length_px, 1e-6)
+        scene_height_m = (distance_m * height_px) / max(self.focal_length_px, 1e-6)
+        scene_area_sqm = max(scene_width_m * scene_height_m, 1e-6)
         occupied_area_sqm = people_count * self.min_person_space_sqm
         available_area_sqm = max(scene_area_sqm - occupied_area_sqm, 0.0)
         crowd_density_ppsqm = people_count / scene_area_sqm
@@ -228,7 +232,7 @@ class EdgeDeviceRunner:
 
     def _post_update(self, estimate: DensityEstimate) -> None:
         status = "active"
-        
+
         payload = {
             "device_id": self.device_id,
             "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
@@ -367,6 +371,12 @@ def parse_args() -> argparse.Namespace:
         help="Assumed real-world average face width in meters",
     )
     parser.add_argument(
+        "--focal-length-px",
+        type=float,
+        default=320.0,
+        help="Camera focal length in pixels for distance/FOV density geometry",
+    )
+    parser.add_argument(
         "--min-person-space-sqm",
         type=float,
         default=0.35,
@@ -375,13 +385,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--post-min-s",
         type=float,
-        default=10.0,
+        default=1.0,
         help="Minimum posting interval in seconds",
     )
     parser.add_argument(
         "--post-max-s",
         type=float,
-        default=15.0,
+        default=3.0,
         help="Maximum posting interval in seconds",
     )
     parser.add_argument(
@@ -393,27 +403,27 @@ def parse_args() -> argparse.Namespace:
         help="Run without model/video by randomizing bounding-box widths",
     )
     parser.add_argument(
-        "--mock-min-faces",
-        type=int,
-        default=5,
-        help="Minimum randomized face detections per cycle in mock mode",
+        "--mock-face-mean",
+        type=float,
+        default=500.0,
+        help="Mean face detections per cycle in mock mode (Gaussian)",
     )
     parser.add_argument(
-        "--mock-max-faces",
-        type=int,
-        default=80,
-        help="Maximum randomized face detections per cycle in mock mode",
+        "--mock-face-sd",
+        type=float,
+        default=80.0,
+        help="Standard deviation of face detections per cycle in mock mode (Gaussian)",
     )
     parser.add_argument(
         "--mock-min-box-width-px",
         type=float,
-        default=24.0,
+        default=3.0,
         help="Minimum randomized face box width in pixels in mock mode",
     )
     parser.add_argument(
         "--mock-max-box-width-px",
         type=float,
-        default=110.0,
+        default=20.0,
         help="Maximum randomized face box width in pixels in mock mode",
     )
     parser.add_argument(
@@ -442,8 +452,12 @@ def main() -> None:
 
     if not args.mock_mode and not args.model:
         raise ValueError("--model is required unless --mock-mode is enabled")
-    if args.mock_min_faces < 0 or args.mock_max_faces < args.mock_min_faces:
-        raise ValueError("Invalid mock face count bounds")
+    if args.focal_length_px <= 0:
+        raise ValueError("--focal-length-px must be > 0")
+    if args.mock_face_mean < 0:
+        raise ValueError("--mock-face-mean must be >= 0")
+    if args.mock_face_sd < 0:
+        raise ValueError("--mock-face-sd must be >= 0")
     if (
         args.mock_min_box_width_px <= 0
         or args.mock_max_box_width_px < args.mock_min_box_width_px
@@ -461,13 +475,14 @@ def main() -> None:
         confidence=args.conf,
         class_id=args.class_id,
         assumed_face_width_m=args.assumed_face_width_m,
+        focal_length_px=args.focal_length_px,
         min_person_space_sqm=args.min_person_space_sqm,
         post_min_interval_s=args.post_min_s,
         post_max_interval_s=args.post_max_s,
         show_preview=args.preview,
         mock_mode=args.mock_mode,
-        mock_min_faces=args.mock_min_faces,
-        mock_max_faces=args.mock_max_faces,
+        mock_face_mean=args.mock_face_mean,
+        mock_face_sd=args.mock_face_sd,
         mock_min_box_width_px=args.mock_min_box_width_px,
         mock_max_box_width_px=args.mock_max_box_width_px,
         mock_frame_width_px=args.mock_frame_width_px,
