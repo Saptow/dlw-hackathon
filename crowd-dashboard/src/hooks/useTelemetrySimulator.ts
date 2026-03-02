@@ -2,10 +2,10 @@ import { useState, useEffect, useRef } from 'react';
 import type { TelemetryData, DeviceStatus, LogEntry, LogEventType, Packet } from '../types';
 
 const LOCATIONS = [
-    { label: "North Gate Area", area: 300 },
-    { label: "Central Plaza", area: 600 },
-    { label: "Subway Entrance A", area: 150 },
-    { label: "South Checkpoint", area: 200 },
+    { label: "Platform 1 (West)", area: 300 },
+    { label: "Platform 2 (East)", area: 600 },
+    { label: "Concourse", area: 150 },
+    { label: "Turnstiles", area: 200 },
 ];
 
 const INITIAL_DEVICES: TelemetryData[] = LOCATIONS.map((loc, i) => {

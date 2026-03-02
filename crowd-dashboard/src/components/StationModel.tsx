@@ -10,10 +10,10 @@ interface StationModelProps {
 
 // Map logical locations to 3D spatial coordinates [x, y, z]
 const LOCATION_COORDINATES: Record<string, [number, number, number]> = {
-    "North Gate Area": [0, 0.01, -4],
-    "Central Plaza": [0, 0.01, 0],
-    "Subway Entrance A": [4, 0.01, 0],
-    "South Checkpoint": [0, 0.01, 4]
+    "Platform 1 (West)": [-3, 0.8, 0],
+    "Platform 2 (East)": [3, 0.8, 0],
+    "Concourse": [0, 0.01, 5],
+    "Turnstiles": [0, 0.01, 2]
 };
 
 function HeatCircle({ device }: { device: TelemetryData }) {
@@ -87,34 +87,71 @@ function HeatCircle({ device }: { device: TelemetryData }) {
 function StationEnvironment() {
     return (
         <group>
-            {/* Main Platform Floor */}
-            <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, -0.25, 0]}>
-                <boxGeometry args={[15, 15, 0.5]} />
+            {/* Base Floor (Concourse level) */}
+            <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, -0.25, 4]}>
+                <boxGeometry args={[16, 6, 0.5]} />
                 <meshStandardMaterial color="#334155" roughness={0.9} />
             </mesh>
 
-            {/* Central Pillar */}
-            <mesh position={[0, 1.5, 0]} castShadow>
-                <boxGeometry args={[1.5, 3, 1.5]} />
-                <meshStandardMaterial color="#475569" roughness={0.7} />
+            {/* Platform 1 (West Raised) */}
+            <mesh position={[-3, 0.25, -2]} receiveShadow castShadow>
+                <boxGeometry args={[4, 1, 12]} />
+                <meshStandardMaterial color="#475569" roughness={0.8} />
             </mesh>
 
-            {/* Corner Pillars */}
-            <mesh position={[-6, 1.5, -6]} castShadow>
-                <boxGeometry args={[0.8, 3, 0.8]} />
-                <meshStandardMaterial color="#475569" roughness={0.7} />
+            {/* Platform 2 (East Raised) */}
+            <mesh position={[3, 0.25, -2]} receiveShadow castShadow>
+                <boxGeometry args={[4, 1, 12]} />
+                <meshStandardMaterial color="#475569" roughness={0.8} />
             </mesh>
-            <mesh position={[6, 1.5, -6]} castShadow>
-                <boxGeometry args={[0.8, 3, 0.8]} />
-                <meshStandardMaterial color="#475569" roughness={0.7} />
+
+            {/* Train Tracks (Recessed Pit between platforms) */}
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.4, -2]} receiveShadow>
+                <boxGeometry args={[2, 12, 0.1]} />
+                <meshStandardMaterial color="#0f172a" roughness={1} />
             </mesh>
-            <mesh position={[-6, 1.5, 6]} castShadow>
-                <boxGeometry args={[0.8, 3, 0.8]} />
-                <meshStandardMaterial color="#475569" roughness={0.7} />
+
+            {/* Track Rails */}
+            <mesh position={[-0.5, -0.35, -2]} castShadow receiveShadow>
+                <boxGeometry args={[0.05, 0.1, 12]} />
+                <meshStandardMaterial color="#64748b" metalness={0.8} roughness={0.2} />
             </mesh>
-            <mesh position={[6, 1.5, 6]} castShadow>
-                <boxGeometry args={[0.8, 3, 0.8]} />
-                <meshStandardMaterial color="#475569" roughness={0.7} />
+            <mesh position={[0.5, -0.35, -2]} castShadow receiveShadow>
+                <boxGeometry args={[0.05, 0.1, 12]} />
+                <meshStandardMaterial color="#64748b" metalness={0.8} roughness={0.2} />
+            </mesh>
+
+            {/* Turnstiles / Gates */}
+            {[-1.5, -0.5, 0.5, 1.5].map((x, i) => (
+                <group key={i} position={[x, 0.5, 2]}>
+                    <mesh castShadow position={[0, 0, 0]}>
+                        <boxGeometry args={[0.2, 1, 0.8]} />
+                        <meshStandardMaterial color="#1e293b" />
+                    </mesh>
+                    <mesh position={[0.2, 0.2, 0.3]} rotation={[0, 0, -0.3]}>
+                        <boxGeometry args={[0.4, 0.05, 0.05]} />
+                        <meshStandardMaterial color="#ef4444" />
+                    </mesh>
+                </group>
+            ))}
+
+            {/* Overhead Info Boards */}
+            <mesh position={[-3, 3, -2]} castShadow>
+                <boxGeometry args={[2, 0.5, 0.1]} />
+                <meshStandardMaterial color="#020617" />
+            </mesh>
+            <mesh position={[3, 3, -2]} castShadow>
+                <boxGeometry args={[2, 0.5, 0.1]} />
+                <meshStandardMaterial color="#020617" />
+            </mesh>
+
+            <mesh position={[-3, 4, -2]} castShadow>
+                <boxGeometry args={[0.1, 2, 0.1]} />
+                <meshStandardMaterial color="#334155" />
+            </mesh>
+            <mesh position={[3, 4, -2]} castShadow>
+                <boxGeometry args={[0.1, 2, 0.1]} />
+                <meshStandardMaterial color="#334155" />
             </mesh>
 
             {/* Lighting - Increased intensity so the dark floor/pillars are visible */}
@@ -135,7 +172,6 @@ export function StationModel({ devices }: StationModelProps) {
 
             <Canvas shadows camera={{ position: [8, 8, 8], fov: 45 }}>
                 <color attach="background" args={['#020617']} />
-                <fog attach="fog" args={['#020617', 10, 30]} />
 
                 <StationEnvironment />
 

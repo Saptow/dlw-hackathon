@@ -34,7 +34,7 @@ export function LiveActivityLog({ logs }: LiveActivityLogProps) {
 
             <div
                 ref={scrollRef}
-                className="h-[200px] overflow-y-auto custom-scrollbar p-3 space-y-1 bg-[#010308] border-t border-white/5"
+                className="h-[120px] overflow-y-auto custom-scrollbar p-3 space-y-1 bg-[#010308] border-t border-white/5"
             >
                 <AnimatePresence initial={false}>
                     {logs.map((log) => {

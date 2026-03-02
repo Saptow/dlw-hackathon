@@ -18,9 +18,9 @@ function App() {
         <div className="relative z-10 max-w-7xl mx-auto flex flex-col h-full">
           <header className="mb-8 flex justify-between items-end">
             <div>
-              <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-white mb-2 flex items-center shadow-black drop-shadow-lg">
+              {/* <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-white mb-2 flex items-center shadow-black drop-shadow-lg">
                 Operations Command Center
-              </h1>
+              </h1> */}
               <p className="text-slate-400 font-mono text-xs md:text-sm uppercase tracking-widest">
                 Live Feed & Crowd Control Grid
               </p>
@@ -41,7 +41,7 @@ function App() {
             ))}
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-4">
             <LiveActivityLog logs={logs} />
             <RawPacketStream packets={packets} />
           </div>

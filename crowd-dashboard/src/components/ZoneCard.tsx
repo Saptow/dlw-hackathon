@@ -45,21 +45,25 @@ export function ZoneCard({ data }: ZoneCardProps) {
 
             <div className="p-5 flex flex-col h-full z-10 relative">
                 {/* Header */}
-                <div className="flex justify-between items-start mb-4">
+                {/* Header */}
+                <div className="flex justify-between items-start mb-4 h-12"> {/* Fixed Height added here */}
                     <div>
-                        <h3 className="font-semibold text-lg text-slate-100 tracking-wide">{location_label}</h3>
+                        <h3 className="font-semibold text-lg text-slate-100 tracking-wide truncate w-40">
+                            {location_label}
+                        </h3>
                         <p className="text-xs text-slate-400 font-mono mt-0.5">{device_id}</p>
                     </div>
-                    <div className="flex items-center space-x-2">
-                        {!isReliable && (
+                    
+                    {/* Wrap the badge area in a container that reserves space */}
+                    <div className="flex items-center justify-end h-8 min-w-[80px]"> 
+                        {!isReliable ? (
                             <span className="flex items-center text-xs text-amber-400 bg-amber-400/10 px-2 py-1 rounded-full border border-amber-400/20">
                                 {status === 'offline' && <WifiOff size={12} className="mr-1" />}
                                 {status === 'obscured' && <EyeOff size={12} className="mr-1" />}
                                 {status === 'uncertain' && <HelpCircle size={12} className="mr-1" />}
                                 <span className="uppercase tracking-wider font-semibold text-[10px]">{status}</span>
                             </span>
-                        )}
-                        {isCritical && isReliable && (
+                        ) : isCritical ? (
                             <motion.div
                                 animate={{ scale: [1, 1.2, 1] }}
                                 transition={{ duration: 0.8, repeat: Infinity }}
@@ -67,12 +71,14 @@ export function ZoneCard({ data }: ZoneCardProps) {
                             >
                                 <AlertTriangle size={20} />
                             </motion.div>
+                        ) : (
+                            // This invisible div keeps the space occupied when everything is "Normal"
+                            <div className="w-5 h-5" /> 
                         )}
                     </div>
                 </div>
-
                 {/* Unreliable Data Filter Area */}
-                <div className={cn("flex-1 flex flex-col transition-all duration-700", !isReliable && "grayscale blur-[2px] opacity-60")}>
+                <div className={cn("flex-1 flex flex-col transition-all duration-700", !isReliable && "grayscale opacity-60")}>
                     <div className="flex items-end justify-between mb-2">
                         <div className="flex flex-col">
                             <span className="text-3xl font-bold font-mono text-white">
@@ -96,7 +102,7 @@ export function ZoneCard({ data }: ZoneCardProps) {
                     </div>
 
                     {/* Liquid Progress Bar */}
-                    <div className="relative h-24 w-full bg-slate-900/50 rounded-lg overflow-hidden mt-auto border border-white/5">
+                    <div className="relative h-20 w-full bg-slate-900/50 rounded-lg overflow-hidden mt-auto border border-white/5">
                         {/* Critical Risk Limit Marker */}
                         <div
                             className="absolute left-0 right-0 border-b border-dashed border-red-500/60 z-20"
@@ -124,7 +130,7 @@ export function ZoneCard({ data }: ZoneCardProps) {
                 </div>
 
                 {/* Footer */}
-                <div className="mt-4 pt-3 border-t border-white/10 flex justify-between items-center text-xs text-slate-400 font-mono">
+                <div className="mt-4 pt-2 border-t border-white/10 flex justify-between items-center text-xs text-slate-400 font-mono">
                     <span>Data Age</span>
                     <span>{dataAge}</span>
                 </div>
