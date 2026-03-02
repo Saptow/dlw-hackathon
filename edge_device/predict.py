@@ -1,3 +1,5 @@
+import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Optional, Sequence, Tuple
@@ -7,6 +9,12 @@ import numpy as np
 import torch
 import torchvision.transforms as transforms
 from PIL import Image
+
+EDGE_DEVICE_DIR = Path(__file__).resolve().parent
+if str(EDGE_DEVICE_DIR) not in sys.path:
+    sys.path.insert(0, str(EDGE_DEVICE_DIR))
+
+import net as _sanet_net  # noqa: F401
 
 from vid_to_img_pipeline import extract_frames, safe_mkdir
 
@@ -40,7 +48,9 @@ def _points_in_poly(points_xy: np.ndarray, poly: Polygon) -> np.ndarray:
     for i in range(len(poly_np)):
         xi, yi = xp[i], yp[i]
         xj, yj = xp[j], yp[j]
-        intersect = ((yi > y) != (yj > y)) & (x < (xj - xi) * (y - yi) / ((yj - yi) + 1e-12) + xi)
+        intersect = ((yi > y) != (yj > y)) & (
+            x < (xj - xi) * (y - yi) / ((yj - yi) + 1e-12) + xi
+        )
         inside ^= intersect
         j = i
     return inside
@@ -127,7 +137,9 @@ def _parse_roi(raw: Optional[str]) -> Optional[list[Point]]:
     return points if points else None
 
 
-def _prepare_eval_patches(image_path: Path) -> tuple[Image.Image, torch.Tensor, int, int]:
+def _prepare_eval_patches(
+    image_path: Path,
+) -> tuple[Image.Image, torch.Tensor, int, int]:
     image = Image.open(image_path).convert("RGB")
     image_tensor = transforms.ToTensor()(image)
     _, h, w = image_tensor.shape
@@ -140,53 +152,96 @@ def _prepare_eval_patches(image_path: Path) -> tuple[Image.Image, torch.Tensor, 
     valid_w = patch_width * 4
     image = image.crop((0, 0, valid_w, valid_h))
     image_tensor = image_tensor[:, :valid_h, :valid_w]
-    image_tensor = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))(image_tensor)
+    image_tensor = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))(
+        image_tensor
+    )
 
     patches = []
     for i in range(7):
         for j in range(7):
             start_h = int(patch_height / 2) * i
             start_w = int(patch_width / 2) * j
-            patches.append(image_tensor[:, start_h:start_h + patch_height, start_w:start_w + patch_width])
+            patches.append(
+                image_tensor[
+                    :, start_h : start_h + patch_height, start_w : start_w + patch_width
+                ]
+            )
     eval_x = torch.stack(patches)
     return image, eval_x, patch_height, patch_width
 
 
-def _predict_density_map(net: torch.nn.Module, eval_x: torch.Tensor, patch_height: int, patch_width: int, device_obj: torch.device):
+def _predict_density_map(
+    net: torch.nn.Module,
+    eval_x: torch.Tensor,
+    patch_height: int,
+    patch_width: int,
+    device_obj: torch.device,
+):
     with torch.no_grad():
-        prediction_map = torch.zeros(1, 1, patch_height * 4, patch_width * 4, device=device_obj)
+        first_pred = net(eval_x[0:1].to(device_obj))
+        out_h, out_w = int(first_pred.shape[-2]), int(first_pred.shape[-1])
+        qh, qw = int(out_h / 4), int(out_w / 4)
+
+        prediction_map = torch.zeros(1, 1, out_h * 4, out_w * 4, device=device_obj)
+
         for i in range(7):
             for j in range(7):
-                eval_x_sample = eval_x[i * 7 + j:i * 7 + j + 1].to(device_obj)
-                eval_prediction = net(eval_x_sample)
-                start_h = int(patch_height / 4)
-                start_w = int(patch_width / 4)
-                valid_h = int(patch_height / 2)
-                valid_w = int(patch_width / 2)
-                h_pred = 3 * int(patch_height / 4) + 2 * int(patch_height / 4) * (i - 1)
-                w_pred = 3 * int(patch_width / 4) + 2 * int(patch_width / 4) * (j - 1)
+                if i == 0 and j == 0:
+                    eval_prediction = first_pred
+                else:
+                    eval_x_sample = eval_x[i * 7 + j : i * 7 + j + 1].to(device_obj)
+                    eval_prediction = net(eval_x_sample)
+
+                start_h = qh
+                start_w = qw
+                valid_h = int(out_h / 2)
+                valid_w = int(out_w / 2)
+                h_pred = 3 * qh + 2 * qh * (i - 1)
+                w_pred = 3 * qw + 2 * qw * (j - 1)
                 if i == 0:
-                    valid_h = int((3 * patch_height) / 4)
+                    valid_h = out_h - qh
                     start_h = 0
                     h_pred = 0
                 elif i == 6:
-                    valid_h = int((3 * patch_height) / 4)
+                    valid_h = out_h - qh
 
                 if j == 0:
-                    valid_w = int((3 * patch_width) / 4)
+                    valid_w = out_w - qw
                     start_w = 0
                     w_pred = 0
                 elif j == 6:
-                    valid_w = int((3 * patch_width) / 4)
+                    valid_w = out_w - qw
 
-                prediction_map[:, :, h_pred:h_pred + valid_h, w_pred:w_pred + valid_w] += eval_prediction[
-                    :, :, start_h:start_h + valid_h, start_w:start_w + valid_w
+                dst_h0 = max(h_pred, 0)
+                dst_w0 = max(w_pred, 0)
+                dst_h1 = min(h_pred + valid_h, prediction_map.shape[-2])
+                dst_w1 = min(w_pred + valid_w, prediction_map.shape[-1])
+                if dst_h1 <= dst_h0 or dst_w1 <= dst_w0:
+                    continue
+
+                src_h0 = start_h + (dst_h0 - h_pred)
+                src_w0 = start_w + (dst_w0 - w_pred)
+                src_h1 = src_h0 + (dst_h1 - dst_h0)
+                src_w1 = src_w0 + (dst_w1 - dst_w0)
+
+                src_h1 = min(src_h1, eval_prediction.shape[-2])
+                src_w1 = min(src_w1, eval_prediction.shape[-1])
+                dst_h1 = dst_h0 + (src_h1 - src_h0)
+                dst_w1 = dst_w0 + (src_w1 - src_w0)
+
+                if src_h1 <= src_h0 or src_w1 <= src_w0:
+                    continue
+
+                prediction_map[:, :, dst_h0:dst_h1, dst_w0:dst_w1] += eval_prediction[
+                    :, :, src_h0:src_h1, src_w0:src_w1
                 ]
     return np.squeeze(prediction_map.permute(0, 2, 3, 1).cpu().numpy())
 
 
 def _load_model(device_obj: torch.device):
-    net = torch.load(CHECKPOINT_PATH, map_location=device_obj, weights_only=False).to(device_obj)
+    net = torch.load(CHECKPOINT_PATH, map_location=device_obj, weights_only=False).to(
+        device_obj
+    )
     net.eval()
     return net
 
@@ -214,12 +269,18 @@ def predict_image(
 
     image, eval_x, patch_height, patch_width = _prepare_eval_patches(image_path)
     net = _model if _model is not None else _load_model(device_obj)
-    pred_map_2d = _predict_density_map(net, eval_x, patch_height, patch_width, device_obj)
+    pred_map_2d = _predict_density_map(
+        net, eval_x, patch_height, patch_width, device_obj
+    )
 
     pred_count = crowd_count_from_density_map(pred_map_2d)
-    pred_density_image = crowd_density_from_density_map(pred_map_2d, region="image", units=units)
+    pred_density_image = crowd_density_from_density_map(
+        pred_map_2d, region="image", units=units
+    )
     pred_density_roi = (
-        crowd_density_from_density_map(pred_map_2d, region="roi", roi_polygon=roi_polygon, units=units)
+        crowd_density_from_density_map(
+            pred_map_2d, region="roi", roi_polygon=roi_polygon, units=units
+        )
         if roi_polygon is not None
         else None
     )
@@ -229,14 +290,20 @@ def predict_image(
         _, (origin, dm_pred) = plt.subplots(1, 2, figsize=(14, 4))
         origin.imshow(image)
         origin.set_title("Origin Image")
-        dm_pred.imshow(pred_map_2d, cmap=plt.cm.jet)
+        dm_pred.imshow(pred_map_2d, cmap="jet")
         dm_pred.set_title("Prediction Density Map")
         plt.suptitle("SANet prediction: {}".format(image_path.name))
         plt.show()
 
-    sys.stdout.write("Pred count: {:.3f}, Pred density({}): {:.6f}".format(pred_count, units, pred_density_image))
+    sys.stdout.write(
+        "Pred count: {:.3f}, Pred density({}): {:.6f}".format(
+            pred_count, units, pred_density_image
+        )
+    )
     if pred_density_roi is not None:
-        sys.stdout.write(", Pred ROI density({}): {:.6f}".format(units, pred_density_roi))
+        sys.stdout.write(
+            ", Pred ROI density({}): {:.6f}".format(units, pred_density_roi)
+        )
     sys.stdout.write("\n")
     if print_grid:
         sys.stdout.write("Pred grid density map:\n{}\n".format(pred_grid))
@@ -247,7 +314,9 @@ def predict_image(
         "model_path": str(CHECKPOINT_PATH),
         "pred_count": float(pred_count),
         "pred_density_image": float(pred_density_image),
-        "pred_density_roi": None if pred_density_roi is None else float(pred_density_roi),
+        "pred_density_roi": (
+            None if pred_density_roi is None else float(pred_density_roi)
+        ),
         "grid": [int(grid[0]), int(grid[1])],
         "grid_counts": pred_grid.tolist(),
         "units": units,
@@ -276,7 +345,9 @@ def predict_video(
 
     video_path = Path(video_path)
     if frames_out_root is None:
-        frames_out_root = Path(__file__).resolve().parent.parent / "runs" / "sanet_frames"
+        frames_out_root = (
+            Path(__file__).resolve().parent.parent / "runs" / "sanet_frames"
+        )
     frames_out_root = Path(frames_out_root)
     safe_mkdir(frames_out_root)
 
@@ -345,3 +416,131 @@ def main(
         show_plot=show_plot,
         device=device,
     )
+
+
+def _parse_resize(raw: Optional[str]) -> Optional[Tuple[int, int]]:
+    if raw is None:
+        return None
+    text = raw.strip().lower()
+    if not text:
+        return None
+    if "x" not in text:
+        raise ValueError("resize must be in 'WIDTHxHEIGHT' format, e.g. '1280x720'.")
+    width, height = text.split("x", 1)
+    return int(width), int(height)
+
+
+def _build_cli_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Run SANet crowd prediction on an image or video."
+    )
+    mode_group = parser.add_mutually_exclusive_group(required=True)
+    mode_group.add_argument("--image", type=str, help="Path to an input image.")
+    mode_group.add_argument("--video", type=str, help="Path to an input video.")
+
+    parser.add_argument(
+        "--grid",
+        type=str,
+        default="8,12",
+        help="Grid rows,cols for per-cell counts. Example: 8,12",
+    )
+    parser.add_argument(
+        "--roi", type=str, default=None, help="ROI polygon in 'x1,y1;x2,y2;...' format."
+    )
+    parser.add_argument(
+        "--units",
+        type=str,
+        default="per_mpx",
+        choices=["per_px2", "per_mpx"],
+        help="Density units.",
+    )
+    parser.add_argument(
+        "--device", type=str, default=None, help="Torch device, e.g. cpu, cuda, cuda:0"
+    )
+    parser.add_argument(
+        "--print-grid", action="store_true", help="Print grid count matrix."
+    )
+    parser.add_argument(
+        "--show-plot",
+        action="store_true",
+        help="Show matplotlib prediction plot per frame/image.",
+    )
+
+    parser.add_argument(
+        "--fps", type=float, default=2.0, help="Video frame sampling rate."
+    )
+    parser.add_argument(
+        "--frames-out-root",
+        type=str,
+        default=None,
+        help="Directory to store extracted frames.",
+    )
+    parser.add_argument(
+        "--resize",
+        type=str,
+        default=None,
+        help="Optional video frame resize, format WIDTHxHEIGHT.",
+    )
+    parser.add_argument(
+        "--prefix", type=str, default="", help="Filename prefix for extracted frames."
+    )
+    parser.add_argument(
+        "--jpg-quality",
+        type=int,
+        default=95,
+        help="JPEG quality for extracted frames (1-100).",
+    )
+
+    parser.add_argument(
+        "--save-json",
+        type=str,
+        default=None,
+        help="Optional path to save full prediction result as JSON.",
+    )
+    return parser
+
+
+def _cli_main() -> int:
+    parser = _build_cli_parser()
+    args = parser.parse_args()
+
+    resize = _parse_resize(args.resize)
+
+    if args.image:
+        result = predict_image(
+            image_path=args.image,
+            grid=args.grid,
+            roi=args.roi,
+            units=args.units,
+            print_grid=args.print_grid,
+            show_plot=args.show_plot,
+            device=args.device,
+        )
+    else:
+        result = predict_video(
+            video_path=args.video,
+            frames_out_root=args.frames_out_root,
+            fps=args.fps,
+            resize=resize,
+            prefix=args.prefix,
+            jpg_quality=args.jpg_quality,
+            grid=args.grid,
+            roi=args.roi,
+            units=args.units,
+            print_grid=args.print_grid,
+            show_plot=args.show_plot,
+            device=args.device,
+        )
+
+    if args.save_json:
+        save_path = Path(args.save_json)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        save_path.write_text(json.dumps(result, indent=2))
+        print(f"Saved prediction JSON: {save_path}")
+
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_cli_main())

@@ -5,16 +5,26 @@ import random
 import signal
 import sys
 import time
+import warnings
 from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from typing import Iterable
 from urllib import error, request
 
 import cv2
 import numpy as np
-from ultralytics import YOLO
+import torch
+import torchvision.transforms as transforms
+from PIL import Image
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
+
+from predict import _predict_density_map
 
 
 @dataclass
@@ -80,7 +90,22 @@ class EdgeDeviceRunner:
         shockwave_cluster_ratio: float,
         lateral_spike_ratio_threshold: float,
     ) -> None:
-        self.model = None if mock_mode else YOLO(model_path)
+        self.model = None
+        self.model_device = "cpu"
+        if not mock_mode:
+            self.model_device = "cuda" if torch.cuda.is_available() else "cpu"
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=r"source code of class 'torch\\.nn\\.modules\\..*' has changed.*",
+                    category=UserWarning,
+                )
+                self.model = torch.load(
+                    model_path,
+                    map_location=torch.device(self.model_device),
+                    weights_only=False,
+                ).to(torch.device(self.model_device))
+            self.model.eval()
         self.source = source
         self.device_id = device_id
         self.server_base_url = server_base_url.rstrip("/")
@@ -138,10 +163,8 @@ class EdgeDeviceRunner:
                 print("Video stream ended or frame read failed.")
                 break
 
-            detections = self._infer_detections(frame)
-            face_widths = [max(0.0, float(x2 - x1)) for x1, _, x2, _ in detections]
-            estimate = self._estimate_density(frame.shape, face_widths)
-            motion_metrics = self._compute_motion_metrics(frame, detections)
+            estimate = self._estimate_density_from_sanet(frame)
+            motion_metrics = self._compute_motion_metrics(frame, [])
             enhanced_risk = self._compute_enhanced_risk(
                 estimate.risk_score, motion_metrics
             )
@@ -153,7 +176,6 @@ class EdgeDeviceRunner:
             if self.show_preview:
                 annotated = self._annotate_frame(
                     frame.copy(),
-                    face_widths,
                     estimate,
                     motion_metrics,
                     enhanced_risk,
@@ -199,7 +221,6 @@ class EdgeDeviceRunner:
                 frame = np.zeros(frame_shape, dtype=np.uint8)
                 annotated = self._annotate_frame(
                     frame,
-                    face_widths,
                     estimate,
                     motion_metrics,
                     enhanced_risk,
@@ -231,38 +252,60 @@ class EdgeDeviceRunner:
             for _ in range(face_count)
         ]
 
+    def _prepare_eval_patches_from_frame(
+        self, frame: np.ndarray
+    ) -> tuple[torch.Tensor, int, int]:
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        image = Image.fromarray(rgb_frame)
+        image_tensor = transforms.ToTensor()(image)
+        _, height, width = image_tensor.shape
+
+        patch_height = int(height / 4)
+        patch_width = int(width / 4)
+        if patch_height <= 0 or patch_width <= 0:
+            raise ValueError("Frame is too small for SANet patch inference")
+
+        valid_height = patch_height * 4
+        valid_width = patch_width * 4
+        image_tensor = image_tensor[:, :valid_height, :valid_width]
+        image_tensor = transforms.Normalize(
+            (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
+        )(image_tensor)
+
+        patches = []
+        for row in range(7):
+            for col in range(7):
+                start_h = int(patch_height / 2) * row
+                start_w = int(patch_width / 2) * col
+                patches.append(
+                    image_tensor[
+                        :,
+                        start_h : start_h + patch_height,
+                        start_w : start_w + patch_width,
+                    ]
+                )
+        eval_x = torch.stack(patches)
+        return eval_x, patch_height, patch_width
+
+    def _predict_density_map_from_frame(self, frame: np.ndarray) -> np.ndarray:
+        if self.model is None:
+            return np.zeros((1, 1), dtype=np.float32)
+
+        eval_x, patch_height, patch_width = self._prepare_eval_patches_from_frame(frame)
+        density_map = _predict_density_map(
+            self.model,
+            eval_x,
+            patch_height,
+            patch_width,
+            torch.device(self.model_device),
+        )
+        return np.asarray(density_map, dtype=np.float32)
+
     def _infer_detections(
         self, frame: np.ndarray
     ) -> list[tuple[float, float, float, float]]:
-        if self.model is None:
-            return []
-
-        results = self.model.predict(
-            frame,
-            conf=self.confidence,
-            verbose=False,
-            classes=[self.class_id],
-        )
-        if not results:
-            return []
-
-        boxes = results[0].boxes
-        if boxes is None or boxes.xyxy is None:
-            return []
-
-        xyxy_raw = boxes.xyxy
-        cpu_method = getattr(xyxy_raw, "cpu", None)
-        if callable(cpu_method):
-            tensor_like: Any = cpu_method()
-            xyxy = np.asarray(tensor_like.numpy())
-        else:
-            xyxy = np.asarray(xyxy_raw)
-        detections: list[tuple[float, float, float, float]] = []
-        for x1, y1, x2, y2 in xyxy:
-            if x2 <= x1 or y2 <= y1:
-                continue
-            detections.append((float(x1), float(y1), float(x2), float(y2)))
-        return detections
+        _ = frame
+        return []
 
     @staticmethod
     def _centroid(box: tuple[float, float, float, float]) -> tuple[float, float]:
@@ -588,6 +631,29 @@ class EdgeDeviceRunner:
         )
         return float(np.clip(enhanced_risk, 0.0, 1.0))
 
+    def _estimate_density_from_sanet(self, frame: np.ndarray) -> DensityEstimate:
+        density_map = self._predict_density_map_from_frame(frame)
+        predicted_count = float(np.sum(density_map))
+        people_count = max(int(round(predicted_count)), 0)
+
+        map_height, map_width = density_map.shape[:2]
+        scene_area_sqm = max((float(map_height) * float(map_width)) / 1e6, 1e-6)
+        occupied_area_sqm = people_count * self.min_person_space_sqm
+        available_area_sqm = max(scene_area_sqm - occupied_area_sqm, 0.0)
+        crowd_density_ppsqm = predicted_count / scene_area_sqm
+        risk_score = self._compute_risk(
+            crowd_density_ppsqm, available_area_sqm, scene_area_sqm
+        )
+
+        return DensityEstimate(
+            people_count=people_count,
+            scene_area_sqm=scene_area_sqm,
+            occupied_area_sqm=occupied_area_sqm,
+            available_area_sqm=available_area_sqm,
+            crowd_density_ppsqm=crowd_density_ppsqm,
+            risk_score=risk_score,
+        )
+
     def _estimate_density(
         self, frame_shape: tuple[int, ...], face_widths_px: Iterable[float]
     ) -> DensityEstimate:
@@ -707,15 +773,44 @@ class EdgeDeviceRunner:
 
     @staticmethod
     def _open_capture(source: str) -> cv2.VideoCapture:
-        capture: cv2.VideoCapture
         if source.isdigit():
             capture = cv2.VideoCapture(int(source))
-        else:
-            capture = cv2.VideoCapture(source)
+            if not capture.isOpened():
+                raise RuntimeError(f"Failed to open camera index source: {source}")
+            return capture
 
-        if not capture.isOpened():
-            raise RuntimeError(f"Failed to open video source: {source}")
-        return capture
+        raw_path = Path(source).expanduser()
+        candidates: list[Path]
+        if raw_path.is_absolute():
+            candidates = [raw_path]
+        else:
+            candidates = [
+                Path.cwd() / raw_path,
+                PROJECT_ROOT / raw_path,
+                PROJECT_ROOT / "edge_device" / raw_path,
+            ]
+
+        seen: set[str] = set()
+        unique_candidates: list[Path] = []
+        for candidate in candidates:
+            key = str(candidate.resolve(strict=False))
+            if key not in seen:
+                seen.add(key)
+                unique_candidates.append(candidate)
+
+        for candidate in unique_candidates:
+            capture = cv2.VideoCapture(str(candidate))
+            if capture.isOpened():
+                return capture
+            capture.release()
+
+        attempted = "\n- ".join(str(path) for path in unique_candidates)
+        raise RuntimeError(
+            "Failed to open video source. Tried:\n- {}\n"
+            "Tip: if your file is in edge_device/video, pass '--source edge_device/video/<name>.mp4'".format(
+                attempted
+            )
+        )
 
     @staticmethod
     def _post_json(url: str, payload: dict) -> None:
@@ -748,7 +843,6 @@ class EdgeDeviceRunner:
     @staticmethod
     def _annotate_frame(
         frame: np.ndarray,
-        widths_px: list[float],
         estimate: DensityEstimate,
         motion_metrics: MotionMetrics,
         enhanced_risk: float,
@@ -772,26 +866,18 @@ class EdgeDeviceRunner:
                 frame, text, (16, y), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2
             )
             y += 28
-
-        if widths_px:
-            med = float(np.median(np.array(widths_px, dtype=np.float32)))
-            cv2.putText(
-                frame,
-                f"Median bbox width(px): {med:.1f}",
-                (16, y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.65,
-                (0, 255, 255),
-                2,
-            )
         return frame
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Edge device crowd-risk estimator using YOLO detections"
+        description="Edge device crowd-risk estimator using SANet density prediction"
     )
-    parser.add_argument("--model", default="", help="Path to YOLO model weights (.pt)")
+    parser.add_argument(
+        "--model",
+        default=str(PROJECT_ROOT / "edge_device" / "checkpoints" / "model_rate.pkl"),
+        help="Path to SANet model checkpoint (.pkl)",
+    )
     parser.add_argument(
         "--source",
         default="0",
@@ -853,13 +939,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--mock-face-mean",
         type=float,
-        default=500.0,
+        default=50.0,
         help="Mean face detections per cycle in mock mode (Gaussian)",
     )
     parser.add_argument(
         "--mock-face-sd",
         type=float,
-        default=80.0,
+        default=10.0,
         help="Standard deviation of face detections per cycle in mock mode (Gaussian)",
     )
     parser.add_argument(

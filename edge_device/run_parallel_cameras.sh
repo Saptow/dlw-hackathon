@@ -24,11 +24,8 @@ CAM2_LOCATION="${CAM2_LOCATION:-Concourse}"
 CAM3_LOCATION="${CAM3_LOCATION:-Platform 1 (West)}"
 CAM4_LOCATION="${CAM4_LOCATION:-Platform 2 (East)}"
 
-CAM4_MODE="${CAM4_MODE:-mock}"  # mock | live
-CAM4_MODEL="${CAM4_MODEL:-}"
-CAM4_SOURCE="${CAM4_SOURCE:-0}"
-CAM4_CLASS_ID="${CAM4_CLASS_ID:-0}"
-CAM4_CONF="${CAM4_CONF:-0.35}"
+CAM4_MODE="${CAM4_MODE:-live}"  # mock | live
+CAM4_SOURCE="${CAM4_SOURCE:-testbench/855749-hd_1920_1080_30fps.mp4}"
 
 LOG_DIR="${LOG_DIR:-$PROJECT_ROOT/edge_device/logs}"
 mkdir -p "$LOG_DIR"
@@ -79,24 +76,13 @@ run_cam4() {
     exit 1
   fi
 
-  if [[ -z "$CAM4_MODEL" ]]; then
-    echo "CAM4_MODE=live requires CAM4_MODEL to be set"
-    exit 1
-  fi
-
-  echo "Starting cam4 in LIVE mode (device_id=$CAM4_DEVICE_ID, source=$CAM4_SOURCE, model=$CAM4_MODEL)"
+  echo "Starting cam4 in LIVE mode (device_id=$CAM4_DEVICE_ID, source=$CAM4_SOURCE)"
   (
     cd "$PROJECT_ROOT"
     uv run "$PYTHON_SCRIPT" \
-      --model "$CAM4_MODEL" \
-      --source "$CAM4_SOURCE" \
       --device-id "$CAM4_DEVICE_ID" \
-      --server-url "$SERVER_URL" \
-      --location-label "$CAM4_LOCATION" \
-      --class-id "$CAM4_CLASS_ID" \
-      --conf "$CAM4_CONF" \
-      --post-min-s "$POST_MIN_S" \
-      --post-max-s "$POST_MAX_S"
+      --source "$CAM4_SOURCE" \
+      --server-url "$SERVER_URL"
   ) >"$LOG_DIR/${name}.log" 2>&1 &
 
   PIDS+=("$!")
