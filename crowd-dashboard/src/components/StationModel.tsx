@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import React, { useRef, useMemo } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, Html } from '@react-three/drei';
 import * as THREE from 'three';
@@ -11,13 +11,13 @@ interface StationModelProps {
 
 // Map logical locations to 3D spatial coordinates [x, y, z]
 const LOCATION_COORDINATES: Record<string, [number, number, number]> = {
-    "Platform 1 (West)": [-3, 0.8, 0],
-    "Platform 2 (East)": [3, 0.8, 0],
+    "Platform 1 (West)": [-3, 0.8, -3.5],
+    "Platform 2 (East)": [3, 0.8, -3.5],
     "Concourse": [0, 0.01, 5],
     "Turnstiles": [0, 0.01, 2]
 };
 
-function HeatCircle({ device, globalThreshold }: { device: TelemetryData, globalThreshold: number }) {
+const HeatCircle = React.memo(function HeatCircle({ device, globalThreshold }: { device: TelemetryData, globalThreshold: number }) {
     const meshRef = useRef<THREE.Mesh>(null);
     const { metrics, status, location_label } = device;
 
@@ -83,11 +83,80 @@ function HeatCircle({ device, globalThreshold }: { device: TelemetryData, global
             </Html>
         </group>
     );
-}
+});
 
-function StationEnvironment() {
+const PersonDot = React.memo(function PersonDot({
+    bounds, yPos
+}: {
+    bounds: { minX: number, maxX: number, minZ: number, maxZ: number },
+    yPos: number
+}) {
+    const meshRef = useRef<THREE.Mesh>(null);
+
+    // Pick random start position within bounds once
+    const startPos = useMemo(() => new THREE.Vector3(
+        bounds.minX + Math.random() * (bounds.maxX - bounds.minX),
+        yPos,
+        bounds.minZ + Math.random() * (bounds.maxZ - bounds.minZ)
+    ), [bounds, yPos]);
+
+    const target = useRef(startPos.clone());
+    const speed = useMemo(() => 0.3 + Math.random() * 0.5, []); // Random walking speed
+    const initialized = useRef(false);
+
+    useFrame((_, delta) => {
+        if (!meshRef.current) return;
+
+        if (!initialized.current) {
+            meshRef.current.position.copy(startPos);
+            initialized.current = true;
+        }
+
+        const pos = meshRef.current.position;
+        const dist = pos.distanceTo(target.current);
+
+        if (dist < 0.2) {
+            // Assign a new random target within bounds
+            target.current.set(
+                bounds.minX + Math.random() * (bounds.maxX - bounds.minX),
+                yPos,
+                bounds.minZ + Math.random() * (bounds.maxZ - bounds.minZ)
+            );
+        } else {
+            // Move towards target smoothly
+            const dir = target.current.clone().sub(pos).normalize();
+            pos.add(dir.multiplyScalar(speed * delta));
+        }
+    });
+
+    return (
+        <mesh ref={meshRef} castShadow>
+            <sphereGeometry args={[0.08, 8, 8]} />
+            <meshStandardMaterial color="#cbd5e1" roughness={0.4} />
+        </mesh>
+    );
+});
+
+const StationEnvironment = React.memo(function StationEnvironment() {
+    // Definining simple bounding boxes for folks to wander in
+    const platform1Bounds = { minX: -4.5, maxX: -1.5, minZ: -7, maxZ: 3 };
+    const platform2Bounds = { minX: 1.5, maxX: 4.5, minZ: -7, maxZ: 3 };
+    const concourseBounds = { minX: -6, maxX: 6, minZ: 2, maxZ: 6 };
+
     return (
         <group>
+            {/* Animated People */}
+            <PersonDot bounds={platform1Bounds} yPos={0.83} />
+            <PersonDot bounds={platform1Bounds} yPos={0.83} />
+
+            <PersonDot bounds={platform2Bounds} yPos={0.83} />
+            <PersonDot bounds={platform2Bounds} yPos={0.83} />
+
+            <PersonDot bounds={concourseBounds} yPos={0.08} />
+            <PersonDot bounds={concourseBounds} yPos={0.08} />
+            <PersonDot bounds={concourseBounds} yPos={0.08} />
+            <PersonDot bounds={concourseBounds} yPos={0.08} />
+
             {/* Base Floor (Concourse level) */}
             <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, -0.25, 4]}>
                 <boxGeometry args={[16, 6, 0.5]} />
@@ -161,9 +230,9 @@ function StationEnvironment() {
             <pointLight position={[0, 8, 0]} intensity={2} color="#acc8f2" />
         </group>
     );
-}
+});
 
-export function StationModel({ devices, globalThreshold }: StationModelProps) {
+export const StationModel = React.memo(function StationModel({ devices, globalThreshold }: StationModelProps) {
     return (
         <div className="glass-panel overflow-hidden relative border-white/10 w-full h-[400px] md:h-full min-h-[400px]">
             <div className="absolute top-4 left-4 z-10 pointer-events-none">
@@ -189,4 +258,4 @@ export function StationModel({ devices, globalThreshold }: StationModelProps) {
             </Canvas>
         </div>
     );
-}
+});
