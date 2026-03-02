@@ -228,11 +228,7 @@ class EdgeDeviceRunner:
 
     def _post_update(self, estimate: DensityEstimate) -> None:
         status = "active"
-        if estimate.risk_score >= 0.75:
-            status = "critical"
-        elif estimate.risk_score >= 0.45:
-            status = "warning"
-
+        
         payload = {
             "device_id": self.device_id,
             "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useTelemetrySimulator } from './hooks/useTelemetrySimulator';
+import { useTelemetryStream } from './hooks/useTelemetryStream';
 import { ZoneCard } from './components/ZoneCard';
 import { LiveActivityLog } from './components/LiveActivityLog';
 import { RawPacketStream } from './components/RawPacketStream';
@@ -7,8 +8,9 @@ import { StationModel } from './components/StationModel';
 
 function App() {
   const [globalThreshold, setGlobalThreshold] = useState(0.8);
-  const { devices, logs, packets } = useTelemetrySimulator(globalThreshold);
+  // const { devices, logs, packets } = useTelemetrySimulator(globalThreshold);
 
+  const { devices, logs, packets } = useTelemetryStream('ws://localhost:8080/ws');
   return (
     <div className="h-screen w-full bg-brand-bg flex font-sans text-slate-200 overflow-hidden">
 

@@ -44,7 +44,6 @@ export function ZoneCard({ data, globalThreshold }: ZoneCardProps) {
 
             <div className="p-5 flex flex-col h-full z-10 relative">
                 {/* Header */}
-                {/* Header */}
                 <div className="flex justify-between items-start mb-4 h-12"> {/* Fixed Height added here */}
                     <div>
                         <h3 className="font-semibold text-lg text-slate-100 tracking-wide truncate w-40">
