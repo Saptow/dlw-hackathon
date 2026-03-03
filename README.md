@@ -1,4 +1,7 @@
-# Dataset Combination Utility
+# Deep Learning Week (DLW Track)
+This is the code repository for Ant Throb Big 😳😳. Our setup guide details as below:
+
+## Dataset Combination Utility
 
 Use this project to combine all YOLO-format datasets in `raw_data/` into one merged dataset.
 
