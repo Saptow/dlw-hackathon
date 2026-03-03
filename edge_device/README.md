@@ -4,8 +4,7 @@ Script: `run_edge_inference.py`
 
 This script:
 
-- runs a YOLO model on a video feed
-- treats one class (default class `0`) as face detections
+- uses our pre-trained SANet model to derive real-time crowd metrics from video input
 - estimates scene scale from median face bounding-box width
 - estimates crowd density in people/square-meter
 - computes a crowd-crush risk score on `[0, 1]`
