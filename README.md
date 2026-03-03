@@ -8,7 +8,6 @@ Use this project to combine all datasets in `raw_data/` into one merged dataset.
 The script will:
 
 - verify each dataset is single-class (`nc: 1`, one `names` entry, and labels using only class id `0`)
-- apply a dataset-specific rule for `prjc.v1i.yolo26`: keep only `head` labels and drop the original `people` labels
 - rewrite all merged labels so class id is `0`
 - set the merged class name to `people`
 - write output (`train/`, `valid/`, `test/`) with a new `data.yaml`
