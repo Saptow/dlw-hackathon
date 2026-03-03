@@ -3,7 +3,7 @@ This is the code repository for Ant Throb Big 😳😳. Our setup guide details 
 
 ## Dataset Combination Utility
 
-Use this project to combine all YOLO-format datasets in `raw_data/` into one merged dataset.
+Use this project to combine all datasets in `raw_data/` into one merged dataset.
 
 The script will:
 
@@ -11,7 +11,7 @@ The script will:
 - apply a dataset-specific rule for `prjc.v1i.yolo26`: keep only `head` labels and drop the original `people` labels
 - rewrite all merged labels so class id is `0`
 - set the merged class name to `people`
-- write output in YOLO layout (`train/`, `valid/`, `test/`) with a new `data.yaml`
+- write output (`train/`, `valid/`, `test/`) with a new `data.yaml`
 
 ## Run
 
