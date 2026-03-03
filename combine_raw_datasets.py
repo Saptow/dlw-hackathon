@@ -305,7 +305,7 @@ def merge_datasets(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Combine YOLO datasets from raw_data into one single-class dataset."
+        description="Combine datasets from raw_data into one single-class dataset."
     )
     parser.add_argument(
         "--raw-data",
